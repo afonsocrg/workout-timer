@@ -31,6 +31,8 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Disable double-tap zoom (iOS) while keeping scrolling and pinch-zoom */
+html, button, a, input, label { touch-action: manipulation; }
 button { font: inherit; color: inherit; cursor: pointer; }
 .hidden { display: none !important; }
 

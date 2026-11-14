@@ -74,6 +74,8 @@ function loadStore() {
 }
 
 let store = loadStore();
+// History of completed workouts: { id, at (ms timestamp), workoutId, name, dur (sec) }
+if (!Array.isArray(store.log)) store.log = [];
 save();
 
 function save() {
@@ -338,8 +340,14 @@ function finishWorkout() {
   stopTimer();
   finishBeep();
   if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
-  $('done-name').textContent = timer.workout.name;
+  const w = timer.workout;
+  store.log.push({ id: uid(), at: Date.now(), workoutId: w.id, name: w.name || 'Untitled', dur: totalOf(timer.segs) });
+  save();
+
+  const week = workoutsThisWeek();
+  $('done-name').textContent = w.name;
   $('done-time').textContent = fmt(totalOf(timer.segs));
+  $('done-week').textContent = week === 1 ? 'First workout this week' : `That's ${week} this week`;
   show('done');
 }
 
@@ -523,50 +531,269 @@ function bindCount(btn, title, get, set, min = 1, max = 99) {
 }
 
 // ---------------------------------------------------------------------------
-// Views
+// Views & tab bar
 // ---------------------------------------------------------------------------
 
+const VIEWS = ['home', 'workouts', 'log', 'edit', 'run', 'done'];
+const TAB_VIEWS = ['home', 'workouts', 'log'];
+
 function show(view) {
-  for (const id of ['home', 'edit', 'run', 'done']) $(id).classList.toggle('hidden', id !== view);
+  for (const id of VIEWS) $(id).classList.toggle('hidden', id !== view);
+  const tabbed = TAB_VIEWS.includes(view);
+  $('tabbar').classList.toggle('hidden', !tabbed);
+  if (tabbed) {
+    document.querySelectorAll('#tabbar [data-tab]').forEach((b) => {
+      const on = b.dataset.tab === view;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
+  }
   window.scrollTo(0, 0);
 }
 
-// ----- Home -----
+document.querySelectorAll('#tabbar [data-tab]').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (b.dataset.tab === 'home') openHome();
+    else if (b.dataset.tab === 'workouts') openWorkouts();
+    else openLog();
+  });
+});
+
+/** Fill a workout card (shared by the home row and the workouts grid). */
+function fillCard(card, w) {
+  card.querySelector('.wo-title').textContent = w.name || 'Untitled';
+  card.querySelector('.wo-total').textContent = fmt(totalOf(buildSegments(w)));
+  card.querySelector('.wo-meta').textContent = describeWorkout(w);
+  return card;
+}
+
+function onActivate(card, fn) {
+  card.addEventListener('click', fn);
+  card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+}
+
+// ----- Activity calendar (home) -----
+
+const dayKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const plural = (n) => `${n} workout${n === 1 ? '' : 's'}`;
+const cal = { year: 0, month: 0 };
+
+function resetCalendar() {
+  const now = new Date();
+  cal.year = now.getFullYear();
+  cal.month = now.getMonth();
+}
+
+/** Number of completed workouts since Monday 00:00 of the current week. */
+function workoutsThisWeek() {
+  const now = new Date();
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  return store.log.filter((e) => e.at >= monday.getTime()).length;
+}
+
+function workoutsInMonth(year, month) {
+  return store.log.filter((e) => {
+    const d = new Date(e.at);
+    return d.getFullYear() === year && d.getMonth() === month;
+  }).length;
+}
+
+function logByDay() {
+  const map = new Map();
+  for (const e of store.log) {
+    const k = dayKey(new Date(e.at));
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(e);
+  }
+  return map;
+}
+
+function renderCalendar() {
+  const byDay = logByDay();
+  const now = new Date();
+  const todayKey = dayKey(now);
+  const first = new Date(cal.year, cal.month, 1);
+  const daysInMonth = new Date(cal.year, cal.month + 1, 0).getDate();
+  const leading = (first.getDay() + 6) % 7; // weeks start on Monday
+  const isCurrentMonth = cal.year === now.getFullYear() && cal.month === now.getMonth();
+  const monthCount = workoutsInMonth(cal.year, cal.month);
+
+  $('cal-month').textContent = first.toLocaleDateString([], { month: 'long', year: 'numeric' });
+  $('cal-stats').textContent = isCurrentMonth
+    ? `${workoutsThisWeek()} this week · ${monthCount} this month`
+    : plural(monthCount);
+  $('cal-next').disabled = isCurrentMonth;
+
+  const days = $('cal-days');
+  days.replaceChildren();
+  for (let i = 0; i < leading; i++) days.appendChild(el('span', 'cal-day empty'));
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(cal.year, cal.month, d);
+    const k = dayKey(date);
+    const entries = byDay.get(k);
+    const btn = el('button', 'cal-day', String(d));
+    btn.type = 'button';
+    if (k === todayKey) btn.classList.add('today');
+    if (date > now) btn.classList.add('future');
+    if (entries) {
+      btn.classList.add('done');
+      btn.setAttribute('aria-label', `${date.toLocaleDateString([], { day: 'numeric', month: 'long' })}, ${plural(entries.length)}`);
+      btn.addEventListener('click', () => openLog(k)); // jump to that day in the log
+    } else {
+      btn.tabIndex = -1;
+    }
+    days.appendChild(btn);
+  }
+}
+
+$('cal-prev').addEventListener('click', () => {
+  cal.month--;
+  if (cal.month < 0) { cal.month = 11; cal.year--; }
+  renderCalendar();
+});
+$('cal-next').addEventListener('click', () => {
+  cal.month++;
+  if (cal.month > 11) { cal.month = 0; cal.year++; }
+  renderCalendar();
+});
+
+// ----- Home: calendar + row of workouts (tap to start) -----
 
 function openHome() {
   editing = null;
-  const grid = $('workout-grid');
-  grid.replaceChildren();
+  resetCalendar();
+  renderCalendar();
 
+  const row = $('quick-row');
+  row.replaceChildren();
   for (const w of store.workouts) {
-    const card = clone('card-tpl');
-    const segs = buildSegments(w);
-    card.querySelector('.wo-title').textContent = w.name || 'Untitled';
-    card.querySelector('.wo-total').textContent = fmt(totalOf(segs));
-    card.querySelector('.wo-meta').textContent = describeWorkout(w);
-    const open = () => openEditor(w.id);
-    card.addEventListener('click', open);
-    card.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
-    const play = card.querySelector('.wo-play');
-    play.disabled = !hasWork(segs);
-    play.addEventListener('click', (e) => { e.stopPropagation(); startWorkout(w, 'home'); });
-    grid.appendChild(card);
+    if (!hasWork(buildSegments(w))) continue;
+    const card = fillCard(clone('card-tpl'), w);
+    card.classList.add('quick');
+    card.setAttribute('aria-label', `Start ${w.name || 'workout'}`);
+    onActivate(card, () => startWorkout(w, 'home'));
+    row.appendChild(card);
+  }
+  if (!row.children.length) {
+    const empty = el('button', 'empty-state', 'No workouts yet. Create one in Workouts.');
+    empty.type = 'button';
+    empty.addEventListener('click', openWorkouts);
+    row.appendChild(empty);
   }
 
-  const add = el('button', 'wo-card new');
-  add.type = 'button';
-  add.append(el('span', 'plus', '+'), el('span', '', 'New workout'));
-  add.addEventListener('click', () => {
-    const w = newWorkout();
-    store.workouts.push(w);
-    save();
-    openEditor(w.id);
-    $('wo-name').focus();
-    $('wo-name').select();
-  });
-  grid.appendChild(add);
-
   show('home');
+}
+
+// ----- Workouts tab: grid of workouts (tap to edit) -----
+
+function createWorkout() {
+  const w = newWorkout();
+  store.workouts.push(w);
+  save();
+  openEditor(w.id);
+  $('wo-name').focus();
+  $('wo-name').select();
+}
+
+function openWorkouts() {
+  editing = null;
+  const list = $('workout-list');
+  list.replaceChildren();
+
+  for (const w of store.workouts) {
+    const row = el('button', 'list-row');
+    row.type = 'button';
+    const text = el('span', 'list-text');
+    text.append(el('span', 'list-title', w.name || 'Untitled'), el('span', 'list-sub', describeWorkout(w)));
+    row.append(text, el('span', 'list-value', fmt(totalOf(buildSegments(w)))), el('span', 'chevron', '›'));
+    row.setAttribute('aria-label', `Edit ${w.name || 'workout'}`);
+    row.addEventListener('click', () => openEditor(w.id));
+    list.appendChild(row);
+  }
+
+  if (!store.workouts.length) {
+    const empty = el('button', 'empty-state', 'No workouts yet. Tap + to create one.');
+    empty.type = 'button';
+    empty.addEventListener('click', createWorkout);
+    list.appendChild(empty);
+  }
+
+  show('workouts');
+}
+
+$('add-workout').addEventListener('click', createWorkout);
+
+// ----- Log tab: every completed workout, grouped by day -----
+
+function openLog(focusDay) {
+  editing = null;
+  const now = new Date();
+  $('log-stats').textContent =
+    `${plural(workoutsThisWeek())} this week · ${workoutsInMonth(now.getFullYear(), now.getMonth())} this month · ${store.log.length} total`;
+
+  const list = $('log-list');
+  list.replaceChildren();
+  const byDay = logByDay();
+  const keys = [...byDay.keys()].sort().reverse(); // newest day first
+  const todayKey = dayKey(now);
+  const yesterdayKey = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+
+  if (!keys.length) list.appendChild(el('div', 'empty-state', 'Finish a workout and it will show up here.'));
+
+  for (const k of keys) {
+    const [y, m, d] = k.split('-').map(Number);
+    const group = el('section', 'log-day');
+    group.id = `day-${k}`;
+    const title = k === todayKey ? 'Today'
+      : k === yesterdayKey ? 'Yesterday'
+      : new Date(y, m - 1, d).toLocaleDateString([], {
+        weekday: 'long', day: 'numeric', month: 'long', ...(y !== now.getFullYear() && { year: 'numeric' }),
+      });
+    group.appendChild(el('div', 'log-day-title', title));
+
+    for (const e of byDay.get(k).sort((a, b) => a.at - b.at)) {
+      const row = el('div', 'log-entry');
+      row.append(
+        el('span', 'log-time', new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        el('span', 'log-name', e.name),
+        el('span', 'log-dur', fmt(e.dur)),
+      );
+      const del = el('button', 'log-del', '✕');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Remove from history');
+      let armed = null;
+      del.addEventListener('click', () => {
+        if (!armed) {
+          del.textContent = 'Remove?';
+          del.classList.add('armed');
+          armed = setTimeout(() => { armed = null; del.textContent = '✕'; del.classList.remove('armed'); }, 3000);
+          return;
+        }
+        clearTimeout(armed);
+        store.log = store.log.filter((x) => x.id !== e.id);
+        save();
+        const y0 = window.scrollY;
+        openLog();
+        window.scrollTo(0, y0);
+      });
+      row.appendChild(del);
+      group.appendChild(row);
+    }
+    list.appendChild(group);
+  }
+
+  show('log');
+
+  if (focusDay) {
+    const target = $(`day-${focusDay}`);
+    if (target) {
+      target.scrollIntoView({ block: 'start' });
+      target.classList.add('flash');
+      setTimeout(() => target.classList.remove('flash'), 1200);
+    }
+  }
 }
 
 // ----- Editor -----
@@ -575,7 +802,7 @@ let editing = null;
 
 function openEditor(id) {
   editing = findWorkout(id);
-  if (!editing) return openHome();
+  if (!editing) return openWorkouts();
   resetDeleteButton();
   renderEditor();
   show('edit');
@@ -707,7 +934,7 @@ $('wo-name').addEventListener('change', (e) => {
   if (!editing.name.trim()) { editing.name = 'Untitled'; e.target.value = editing.name; save(); }
 });
 
-$('edit-back').addEventListener('click', openHome);
+$('edit-back').addEventListener('click', openWorkouts);
 
 $('add-block').addEventListener('click', () => {
   const blocks = editing.blocks;
@@ -740,7 +967,7 @@ $('delete').addEventListener('click', () => {
   resetDeleteButton();
   store.workouts = store.workouts.filter((w) => w !== editing);
   save();
-  openHome();
+  openWorkouts();
 });
 
 $('start').addEventListener('click', () => startWorkout(editing, 'edit'));

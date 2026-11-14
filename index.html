@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#0b0b0d" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Timer" />
@@ -14,13 +14,66 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Home: grid of saved workouts -->
-  <main id="home" class="view page">
+  <!-- Home: activity calendar + row of workouts (tap to start) -->
+  <main id="home" class="view page tabbed">
     <header class="page-header">
-      <h1>Workouts</h1>
+      <h1>Workout Timer</h1>
     </header>
-    <div id="workout-grid" class="grid"></div>
+
+    <section class="cal">
+      <div class="cal-head">
+        <div class="cal-title">
+          <div id="cal-month"></div>
+          <div id="cal-stats" class="cal-stats"></div>
+        </div>
+        <button id="cal-prev" class="icon-btn cal-nav" type="button" aria-label="Previous month">‹</button>
+        <button id="cal-next" class="icon-btn cal-nav" type="button" aria-label="Next month">›</button>
+      </div>
+      <div class="cal-grid cal-weekdays" aria-hidden="true">
+        <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+      </div>
+      <div id="cal-days" class="cal-grid"></div>
+    </section>
+
+    <h2 class="section-title">Start a workout</h2>
+    <div id="quick-row" class="quick-row"></div>
   </main>
+
+  <!-- Workouts tab: list of saved workouts (tap to edit) -->
+  <main id="workouts" class="view page tabbed hidden">
+    <header class="page-header with-action">
+      <h1>Workouts</h1>
+      <button id="add-workout" class="header-action" type="button" aria-label="New workout">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+    <div id="workout-list" class="list"></div>
+  </main>
+
+  <!-- Log tab: completed workouts -->
+  <main id="log" class="view page tabbed hidden">
+    <header class="page-header">
+      <h1>Log</h1>
+      <div id="log-stats" class="log-stats"></div>
+    </header>
+    <div id="log-list"></div>
+  </main>
+
+  <!-- Bottom tab bar -->
+  <nav id="tabbar" class="tabbar" aria-label="Main">
+    <button type="button" data-tab="home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span>
+    </button>
+    <button type="button" data-tab="workouts">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5M12 2.5V5"/></svg>
+      <span>Workouts</span>
+    </button>
+    <button type="button" data-tab="log">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4M8.5 15l2.5 2.5 4.5-4.5"/></svg>
+      <span>Log</span>
+    </button>
+  </nav>
 
   <!-- Workout editor -->
   <main id="edit" class="view page hidden">
@@ -30,7 +83,7 @@
     </header>
     <div class="edit-total">Total <strong id="total-time">0:00</strong></div>
 
-    <section class="card">
+    <section class="group">
       <div class="row">
         <span>Get ready</span>
         <button id="prep" class="pill" type="button"></button>
@@ -39,11 +92,11 @@
 
     <div id="blocks"></div>
 
-    <button id="add-block" class="btn ghost wide" type="button">+ Add block</button>
+    <button id="add-block" class="text-btn" type="button">+ Add block</button>
 
     <div class="edit-extra">
-      <button id="duplicate" class="btn subtle" type="button">Duplicate</button>
-      <button id="delete" class="btn subtle danger" type="button">Delete</button>
+      <button id="duplicate" class="text-btn muted" type="button">Duplicate</button>
+      <button id="delete" class="text-btn danger" type="button">Delete</button>
     </div>
 
     <div class="start-bar">
@@ -82,6 +135,7 @@
     <div class="done-center">
       <div class="done-title">Done!</div>
       <div class="done-sub"><span id="done-name"></span> · <span id="done-time"></span></div>
+      <div id="done-week" class="done-week"></div>
       <button id="done-back" class="btn primary" type="button">Back</button>
     </div>
   </main>
@@ -106,15 +160,12 @@
       <div class="wo-title"></div>
       <div class="wo-total"></div>
       <div class="wo-meta"></div>
-      <button class="wo-play" type="button" aria-label="Start workout">
-        <!-- Centroid of the triangle sits at (7,7), the optical centre of the circle -->
-        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M4 2 L13 7 L4 12 Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-      </button>
+      <svg class="wo-start-hint" viewBox="0 0 14 14" aria-hidden="true"><path d="M4 2 L13 7 L4 12 Z"/></svg>
     </div>
   </template>
 
   <template id="block-tpl">
-    <section class="card block">
+    <section class="group block">
       <div class="block-head">
         <input class="block-name" type="text" maxlength="40" placeholder="Block name" />
         <div class="block-actions">
@@ -128,7 +179,7 @@
         <button class="pill pill-rounds" type="button"></button>
       </div>
       <div class="steps"></div>
-      <button class="add-step" type="button">+ Add step</button>
+      <button class="add-step text-btn" type="button">+ Add step</button>
       <div class="row rest-row">
         <span>Rest between rounds</span>
         <button class="pill pill-rest" type="button"></button>

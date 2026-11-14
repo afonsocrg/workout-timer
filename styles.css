@@ -1,4 +1,6 @@
 :root {
+  /* iOS reserves 34px for the home indicator; the indicator itself only needs ~20px clearance */
+  --safe-bottom: max(8px, calc(env(safe-area-inset-bottom) - 14px));
   /* Neutral near-black palette with one accent */
   --bg: #0b0b0d;
   --surface: #17171a;
@@ -21,6 +23,7 @@
 html, body {
   margin: 0;
   height: 100%;
+  overscroll-behavior-y: none;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
@@ -36,7 +39,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: calc(env(safe-area-inset-top) + 20px) 20px calc(env(safe-area-inset-bottom) + 20px);
 }
 .page { max-width: 640px; margin: 0 auto; }
-.view.tabbed { padding-bottom: calc(env(safe-area-inset-bottom) + 88px); }
+.view.tabbed { padding-bottom: calc(var(--safe-bottom) + 88px); }
 
 /* ---------- Typography & headers ---------- */
 .page-header { margin-bottom: 20px; }
@@ -157,7 +160,7 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   -webkit-backdrop-filter: saturate(160%) blur(16px);
   backdrop-filter: saturate(160%) blur(16px);
   border-top: 1px solid var(--line);
-  padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px);
+  padding: 6px 8px var(--safe-bottom);
 }
 .tabbar button {
   flex: 1;
@@ -354,7 +357,7 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .start-bar {
   position: fixed;
   left: 0; right: 0; bottom: 0;
-  padding: 16px 20px calc(env(safe-area-inset-bottom) + 12px);
+  padding: 16px 20px calc(var(--safe-bottom) + 4px);
   background: linear-gradient(transparent, var(--bg) 35%);
 }
 .start-bar .btn { max-width: 600px; display: block; margin: 0 auto; font-size: 18px; }

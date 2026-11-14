@@ -226,8 +226,11 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   background: var(--card);
   border-radius: 18px 18px 0 0;
   padding: 0 16px calc(env(safe-area-inset-bottom) + 20px);
+  overflow: hidden;
+  touch-action: none;   /* the sheet itself never pans; only the wheels scroll */
   animation: slide-up 0.22s ease-out;
 }
+.sheet-panel .wheel-scroll { touch-action: pan-y; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes slide-up { from { transform: translateY(100%); } }
 
@@ -257,7 +260,9 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .wheel-scroll {
   height: 100%;
   width: 72px;
+  overflow-x: hidden;   /* otherwise overflow-y forces overflow-x to auto and the tilted items allow sideways panning */
   overflow-y: scroll;
+  touch-action: pan-y;  /* vertical drags only */
   scroll-snap-type: y mandatory;
   scrollbar-width: none;
   overscroll-behavior: contain;
@@ -268,6 +273,7 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .wheel-scroll::-webkit-scrollbar { display: none; }
 .wheel-item {
+  margin: 0 8px;  /* room for the 3D tilt so items never overflow the wheel horizontally */
   height: var(--wheel-item);
   line-height: var(--wheel-item);
   text-align: center;

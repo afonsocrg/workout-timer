@@ -646,6 +646,8 @@ function renderCalendar() {
     }
     days.appendChild(btn);
   }
+  // Always render 6 weeks so the calendar height never changes between months
+  for (let i = leading + daysInMonth; i < 42; i++) days.appendChild(el('span', 'cal-day empty'));
 }
 
 $('cal-prev').addEventListener('click', () => {

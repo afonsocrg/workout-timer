@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Timer" />
+  <title>Workout Timer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Home: grid of saved workouts -->
+  <main id="home" class="view page">
+    <header class="page-header">
+      <h1>Workouts</h1>
+    </header>
+    <div id="workout-grid" class="grid"></div>
+  </main>
+
+  <!-- Workout editor -->
+  <main id="edit" class="view page hidden">
+    <header class="edit-header">
+      <button id="edit-back" class="icon-btn back" type="button" aria-label="Back to workouts">‹</button>
+      <input id="wo-name" class="wo-name" type="text" maxlength="40" placeholder="Workout name" />
+    </header>
+    <div class="edit-total">Total <strong id="total-time">0:00</strong></div>
+
+    <section class="card">
+      <div class="row">
+        <span>Get ready</span>
+        <button id="prep" class="pill" type="button"></button>
+      </div>
+    </section>
+
+    <div id="blocks"></div>
+
+    <button id="add-block" class="btn ghost wide" type="button">+ Add block</button>
+
+    <div class="edit-extra">
+      <button id="duplicate" class="btn subtle" type="button">Duplicate</button>
+      <button id="delete" class="btn subtle danger" type="button">Delete</button>
+    </div>
+
+    <div class="start-bar">
+      <button id="start" class="btn primary wide" type="button">Start</button>
+    </div>
+  </main>
+
+  <!-- Running -->
+  <main id="run" class="view hidden" data-phase="prep">
+    <div class="run-top">
+      <div id="run-block" class="run-block"></div>
+      <div class="run-status">
+        <div><span id="run-round"></span><strong id="run-total">0:00</strong> left</div>
+        <div id="run-eta" class="run-eta"></div>
+      </div>
+    </div>
+
+    <div class="run-center">
+      <div id="run-label" class="run-label">Get ready</div>
+      <div id="run-time" class="run-time">0:10</div>
+      <div class="progress"><div id="run-progress"></div></div>
+      <div id="run-next" class="run-next"></div>
+    </div>
+
+    <div class="run-bottom">
+      <div class="controls">
+        <button id="stop" class="btn ctrl" type="button">Stop</button>
+        <button id="pause" class="btn ctrl big" type="button">Pause</button>
+        <button id="skip" class="btn ctrl" type="button">Skip</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Finished -->
+  <main id="done" class="view hidden">
+    <div class="done-center">
+      <div class="done-title">Done!</div>
+      <div class="done-sub"><span id="done-name"></span> · <span id="done-time"></span></div>
+      <button id="done-back" class="btn primary" type="button">Back</button>
+    </div>
+  </main>
+
+  <!-- Wheel picker sheet -->
+  <div id="sheet" class="sheet hidden" aria-hidden="true">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-panel" role="dialog" aria-labelledby="sheet-title">
+      <div class="sheet-head">
+        <span id="sheet-title"></span>
+        <button id="sheet-done" type="button">Done</button>
+      </div>
+      <div class="wheels">
+        <div class="wheel-band"></div>
+        <div id="wheels-row" class="wheels-row"></div>
+      </div>
+    </div>
+  </div>
+
+  <template id="card-tpl">
+    <div class="wo-card" role="button" tabindex="0">
+      <div class="wo-title"></div>
+      <div class="wo-total"></div>
+      <div class="wo-meta"></div>
+      <button class="wo-play" type="button" aria-label="Start workout">
+        <!-- Centroid of the triangle sits at (7,7), the optical centre of the circle -->
+        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M4 2 L13 7 L4 12 Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </template>
+
+  <template id="block-tpl">
+    <section class="card block">
+      <div class="block-head">
+        <input class="block-name" type="text" maxlength="40" placeholder="Block name" />
+        <div class="block-actions">
+          <button class="icon-btn" data-act="up" type="button" aria-label="Move block up">↑</button>
+          <button class="icon-btn" data-act="down" type="button" aria-label="Move block down">↓</button>
+          <button class="icon-btn danger" data-act="remove" type="button" aria-label="Remove block">✕</button>
+        </div>
+      </div>
+      <div class="row">
+        <span>Rounds</span>
+        <button class="pill pill-rounds" type="button"></button>
+      </div>
+      <div class="steps"></div>
+      <button class="add-step" type="button">+ Add step</button>
+      <div class="row rest-row">
+        <span>Rest between rounds</span>
+        <button class="pill pill-rest" type="button"></button>
+      </div>
+      <div class="row rest-after-row">
+        <span>Rest after block</span>
+        <button class="pill pill-rest-after" type="button"></button>
+      </div>
+      <div class="block-summary"></div>
+    </section>
+  </template>
+
+  <template id="step-tpl">
+    <div class="step">
+      <button class="kind" type="button"></button>
+      <input class="step-name" type="text" maxlength="30" placeholder="Name" />
+      <button class="pill dur" type="button"></button>
+      <button class="icon-btn small danger" data-act="remove-step" type="button" aria-label="Remove step">✕</button>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

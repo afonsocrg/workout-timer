@@ -201,30 +201,13 @@ function chime(freq, delay, decay, vol = 0.5) {
 }
 
 /**
- * Sustained tone (held, then released) rather than a struck chime. Same soft
- * overtones as chime() so it sits in the same family of sounds.
+ * Start beep: the same A5 ping as the countdown, but ringing out longer
+ * (~0.9s). Cut short so it always fades before the first countdown ping,
+ * which comes at (firstSegDur - 3) seconds.
  */
-function tone(freq, delay, hold, release, vol = 0.5) {
-  if (!audioCtx) return;
-  const t = audioCtx.currentTime + delay;
-  for (const [mult, amp] of [[1, 1], [2, 0.3], [3, 0.08]]) {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq * mult;
-    const peak = Math.max(0.0002, vol * amp);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(peak, t + 0.02);
-    gain.gain.setValueAtTime(peak, t + hold);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + hold + release);
-    osc.connect(gain).connect(master);
-    osc.start(t);
-    osc.stop(t + hold + release + 0.05);
-  }
+function startBeep(firstSegDur) {
+  chime(880, 0, Math.min(0.9, firstSegDur - 3 - 0.05), 0.55);
 }
-
-/** Long beep confirming the workout has started. */
-const startBeep = () => tone(1046.5, 0, 0.55, 0.2, 0.45);  // C6, ~0.75s
 
 /** Soft ping for each of the last 3 seconds. */
 const countdownBeep = () => chime(880, 0, 0.35);          // A5
@@ -298,7 +281,7 @@ function startWorkout(w, returnTo) {
 
   // Confirm the start with a long beep, unless the first segment is so short
   // that the 3-2-1 countdown is already due: then a countdown ping starts it.
-  if (segs[0].dur > 3) startBeep();
+  if (segs[0].dur > 3) startBeep(segs[0].dur);
   else countdownBeep();
 
   show('run');

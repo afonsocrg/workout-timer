@@ -107,14 +107,19 @@
   <!-- Running -->
   <main id="run" class="view hidden" data-phase="prep">
     <div class="run-top">
-      <div id="run-block" class="run-block"></div>
-      <div class="run-status">
-        <div><span id="run-round"></span><strong id="run-total">0:00</strong> left</div>
+      <div id="run-round" class="run-stat">
+        <div class="run-stat-label">Round</div>
+        <div class="run-round-count"><span id="run-round-num">1</span><span class="run-round-of">/<span id="run-round-total">1</span></span></div>
+      </div>
+      <div class="run-stat run-status">
+        <div class="run-stat-label">Left</div>
+        <div id="run-total" class="run-total">0:00</div>
         <div id="run-eta" class="run-eta"></div>
       </div>
     </div>
 
     <div class="run-center">
+      <div id="run-block" class="run-block"></div>
       <div id="run-label" class="run-label">Get ready</div>
       <div id="run-time" class="run-time">0:10</div>
       <div class="progress"><div id="run-progress"></div></div>

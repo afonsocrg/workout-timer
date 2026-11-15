@@ -265,6 +265,7 @@ const timer = {
 function startWorkout(w, returnTo) {
   const segs = buildSegments(w);
   if (!hasWork(segs)) return;
+  numberWorkRounds(segs);
   unlockAudio();
   requestWakeLock();
 
@@ -288,6 +289,22 @@ function startWorkout(w, returnTo) {
   renderRun();
   clearInterval(timer.interval);
   timer.interval = setInterval(tick, 50);
+}
+
+/**
+ * Count rounds across the whole workout, where each work interval is a round.
+ * Prep and rest segments show the round that comes next.
+ */
+function numberWorkRounds(segs) {
+  const total = segs.filter((s) => s.type === 'work').length;
+  let n = 0;
+  for (const s of segs) if (s.type === 'work') s.workNo = ++n;
+  let upcoming = total;
+  for (let i = segs.length - 1; i >= 0; i--) {
+    if (segs[i].type === 'work') upcoming = segs[i].workNo;
+    else segs[i].workNo = upcoming;
+  }
+  segs.workTotal = total;
 }
 
 function tick() {
@@ -383,7 +400,9 @@ function renderRun(leftMs) {
   $('run-label').textContent = timer.paused ? 'Paused' : seg.label;
   $('run-time').textContent = fmt(Math.ceil(leftMs / 1000));
   $('run-block').textContent = seg.block && timer.workout.blocks.length > 1 ? seg.block : '';
-  $('run-round').textContent = seg.rounds > 1 ? `Round ${seg.round}/${seg.rounds} · ` : '';
+  $('run-round').style.visibility = timer.segs.workTotal < 2 ? 'hidden' : ''; // keep its space so "left" stays put
+  $('run-round-num').textContent = seg.workNo;
+  $('run-round-total').textContent = timer.segs.workTotal;
   $('run-progress').style.width = `${(1 - leftMs / (seg.dur * 1000)) * 100}%`;
 
   const next = timer.segs[timer.idx + 1];

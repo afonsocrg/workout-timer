@@ -108,6 +108,19 @@ function fmt(totalSec) {
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 const clone = (tplId) => $(tplId).content.firstElementChild.cloneNode(true);
 
+/** Names that say nothing beyond what the background colour already shows. */
+const isGenericName = (n) => !n || /^(work|rest|block \d+)$/i.test(n.trim());
+
+/**
+ * What to show while a step runs: its own name, else (for work) its block's
+ * name, else plain "Work" / "Rest".
+ */
+function stepLabel(step, block) {
+  if (!isGenericName(step.name)) return step.name.trim();
+  if (step.kind === 'work' && !isGenericName(block.name)) return block.name.trim();
+  return step.kind === 'rest' ? 'Rest' : 'Work';
+}
+
 /** Flatten a workout into a linear list of timed segments. */
 function buildSegments(w) {
   const segs = [];
@@ -118,7 +131,7 @@ function buildSegments(w) {
     for (let r = 1; r <= b.rounds; r++) {
       const info = { block: b.name, round: r, rounds: b.rounds };
       for (const s of steps) {
-        segs.push({ type: s.kind, label: s.name || (s.kind === 'rest' ? 'Rest' : 'Work'), dur: s.dur, ...info });
+        segs.push({ type: s.kind, label: stepLabel(s, b), dur: s.dur, ...info });
       }
       if (r < b.rounds && b.rest > 0) segs.push({ type: 'rest', label: 'Rest', dur: b.rest, ...info });
     }
@@ -399,7 +412,6 @@ function renderRun(leftMs) {
 
   $('run-label').textContent = timer.paused ? 'Paused' : seg.label;
   $('run-time').textContent = fmt(Math.ceil(leftMs / 1000));
-  $('run-block').textContent = seg.block && timer.workout.blocks.length > 1 ? seg.block : '';
   $('run-round').style.visibility = timer.segs.workTotal < 2 ? 'hidden' : ''; // keep its space so "left" stays put
   $('run-round-num').textContent = seg.workNo;
   $('run-round-total').textContent = timer.segs.workTotal;

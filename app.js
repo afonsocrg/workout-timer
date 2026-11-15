@@ -705,14 +705,24 @@ function openWorkouts() {
   list.replaceChildren();
 
   for (const w of store.workouts) {
+    const item = el('div', 'list-item');
+    item.dataset.id = w.id;
     const row = el('button', 'list-row');
     row.type = 'button';
     const text = el('span', 'list-text');
     text.append(el('span', 'list-title', w.name || 'Untitled'), el('span', 'list-sub', describeWorkout(w)));
-    row.append(text, el('span', 'list-value', fmt(totalOf(buildSegments(w)))), el('span', 'chevron', '›'));
+    row.append(text, el('span', 'list-value', fmt(totalOf(buildSegments(w)))));
     row.setAttribute('aria-label', `Edit ${w.name || 'workout'}`);
     row.addEventListener('click', () => openEditor(w.id));
-    list.appendChild(row);
+
+    const handle = el('button', 'drag-handle');
+    handle.type = 'button';
+    handle.setAttribute('aria-label', `Reorder ${w.name || 'workout'} (drag, or use arrow keys)`);
+    handle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
+    bindDragHandle(handle, item);
+
+    item.append(row, handle);
+    list.appendChild(item);
   }
 
   if (!store.workouts.length) {
@@ -726,6 +736,69 @@ function openWorkouts() {
 }
 
 $('add-workout').addEventListener('click', createWorkout);
+
+/** Persist the workout order from the current DOM order of the list. */
+function saveListOrder() {
+  const ids = [...$('workout-list').querySelectorAll('.list-item')].map((n) => n.dataset.id);
+  store.workouts.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  save();
+}
+
+/**
+ * Drag a row by its handle: the row follows the finger and the others slide
+ * out of the way. On release the DOM is reordered and the new order saved.
+ */
+function bindDragHandle(handle, item) {
+  handle.addEventListener('keydown', (e) => {
+    const sib = e.key === 'ArrowUp' ? item.previousElementSibling : e.key === 'ArrowDown' ? item.nextElementSibling : null;
+    if (!sib) return;
+    e.preventDefault();
+    if (e.key === 'ArrowUp') sib.before(item); else sib.after(item);
+    saveListOrder();
+    handle.focus();
+  });
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+
+    const items = [...item.parentElement.querySelectorAll('.list-item')];
+    const from = items.indexOf(item);
+    const rects = items.map((n) => n.getBoundingClientRect());
+    const h = rects[from].height;
+    const startY = e.clientY;
+    let to = from;
+    item.classList.add('dragging');
+    items.forEach((n) => { if (n !== item) n.classList.add('shifting'); });
+
+    const move = (ev) => {
+      const dy = Math.max(rects[0].top - rects[from].top, Math.min(rects[items.length - 1].top - rects[from].top, ev.clientY - startY));
+      item.style.transform = `translateY(${dy}px)`;
+      const center = rects[from].top + h / 2 + dy;
+      to = rects.findIndex((r) => center < r.bottom);
+      if (to === -1) to = items.length - 1;
+      items.forEach((n, i) => {
+        if (n === item) return;
+        const shift = from < to && i > from && i <= to ? -h : to < from && i >= to && i < from ? h : 0;
+        n.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      items.forEach((n) => { n.classList.remove('dragging', 'shifting'); n.style.transform = ''; });
+      if (to !== from) {
+        if (to > from) items[to].after(item); else items[to].before(item);
+        saveListOrder();
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+}
 
 // ----- Log tab: every completed workout, grouped by day -----
 

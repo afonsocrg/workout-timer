@@ -579,6 +579,22 @@ function bindCount(btn, title, get, set, min = 1, max = 99) {
 // Views & tab bar
 // ---------------------------------------------------------------------------
 
+// iOS home-screen apps (viewport-fit=cover + black-translucent status bar) can
+// report a viewport that stops short of the screen bottom by about the
+// status-bar height, leaving a strip of bare background under fixed-bottom UI.
+// Measure that strip so the CSS can stretch the tab bar and full-screen views
+// over it.
+function updateViewportGap() {
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const portrait = matchMedia('(orientation: portrait)').matches;
+  let gap = standalone && portrait ? screen.height - window.innerHeight : 0;
+  if (gap < 0 || gap > 120) gap = 0;   // ignore anything that isn't this bug
+  document.documentElement.style.setProperty('--vp-gap', `${gap}px`);
+}
+updateViewportGap();
+window.addEventListener('resize', updateViewportGap);
+window.addEventListener('orientationchange', updateViewportGap);
+
 const VIEWS = ['home', 'workouts', 'log', 'edit', 'run', 'done'];
 const TAB_VIEWS = ['home', 'workouts', 'log'];
 

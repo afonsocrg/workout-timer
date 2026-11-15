@@ -1,8 +1,6 @@
 :root {
   /* iOS reserves 34px for the home indicator; the indicator itself only needs ~20px clearance */
   --safe-bottom: max(8px, calc(env(safe-area-inset-bottom) - 14px));
-  /* Strip below the reported viewport on buggy iOS home-screen apps (set in app.js) */
-  --vp-gap: 0px;
   /* Neutral near-black palette with one accent */
   --bg: #0b0b0d;
   --surface: #17171a;
@@ -156,7 +154,7 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 /* ---------- Tab bar ---------- */
 .tabbar {
   position: fixed;
-  left: 0; right: 0; bottom: calc(-1 * var(--vp-gap));
+  left: 0; right: 0; bottom: 0;
   z-index: 5;
   display: flex;
   justify-content: center;
@@ -389,14 +387,14 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 
 .start-bar {
   position: fixed;
-  left: 0; right: 0; bottom: calc(-1 * var(--vp-gap));
+  left: 0; right: 0; bottom: 0;
   padding: 16px 20px calc(var(--safe-bottom) + 4px);
   background: linear-gradient(transparent, var(--bg) 35%);
 }
 .start-bar .btn { max-width: 600px; display: block; margin: 0 auto; font-size: 18px; }
 
 /* ---------- Wheel picker sheet ---------- */
-.sheet { position: fixed; inset: 0 0 calc(-1 * var(--vp-gap)); z-index: 10; }
+.sheet { position: fixed; inset: 0; z-index: 10; }
 .sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); animation: fade 0.2s; }
 .sheet-panel {
   position: absolute;
@@ -468,14 +466,6 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .wheel-unit { position: absolute; left: 100%; color: var(--muted); font-size: 15px; margin-left: -6px; pointer-events: none; }
 
 /* ---------- Running ---------- */
-/* Full-screen colour views: pinned to cover the whole screen, including the
-   strip below the viewport on buggy iOS home-screen apps */
-#run, #done {
-  position: fixed;
-  inset: 0 0 calc(-1 * var(--vp-gap));
-  min-height: 0;
-  overflow-y: auto;
-}
 #run {
   display: flex;
   flex-direction: column;

@@ -538,6 +538,7 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .controls { display: flex; justify-content: center; gap: 12px; }
 .btn.ctrl { background: rgba(0,0,0,0.22); color: #fff; min-width: 96px; }
 .btn.ctrl.big { min-width: 140px; background: rgba(0,0,0,0.35); }
+.btn.ctrl.armed { background: var(--danger); color: #fff; }
 
 /* ---------- Done ---------- */
 #done { display: flex; align-items: center; justify-content: center; background: var(--accent); color: #111; }

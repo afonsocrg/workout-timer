@@ -180,8 +180,32 @@ function unlockAudio() {
     master.gain.value = 0.9;
     master.connect(comp).connect(audioCtx.destination);
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  resumeAudio();
   chime(440, 0, 0.05, 0.0001); // silent blip so mobile browsers treat audio as started by a gesture
+}
+
+/**
+ * When the app goes to the background, iOS suspends the AudioContext (state
+ * "interrupted" or "suspended") and never resumes it on its own, so every
+ * later chime is silent. Kick it back to "running" whenever we can.
+ */
+function resumeAudio() {
+  if (audioCtx && audioCtx.state !== 'running' && audioCtx.state !== 'closed') {
+    audioCtx.resume().catch(() => {});
+  }
+}
+
+// Coming back to the app: try straight away (works on most browsers)...
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') resumeAudio();
+});
+window.addEventListener('pageshow', resumeAudio);
+window.addEventListener('focus', resumeAudio);
+// ...and on the next touch, since iOS may only allow resuming from a gesture.
+for (const ev of ['pointerdown', 'touchend', 'keydown']) {
+  document.addEventListener(ev, () => {
+    if (audioCtx && audioCtx.state !== 'running') unlockAudio();
+  }, { capture: true, passive: true });
 }
 
 /**
@@ -190,6 +214,7 @@ function unlockAudio() {
  */
 function chime(freq, delay, decay, vol = 0.5) {
   if (!audioCtx) return;
+  resumeAudio();
   const t = audioCtx.currentTime + delay;
   const partials = [
     [1, 1],        // fundamental
@@ -370,12 +395,30 @@ function skipSegment() {
 }
 
 function stopTimer() {
+  resetStopButton();
   timer.running = false;
   clearInterval(timer.interval);
   releaseWakeLock();
 }
 
+// Stop needs a second tap within 3 seconds, so a stray tap mid-workout
+// doesn't throw away the session. The timer keeps running meanwhile.
+let stopArmed = null;
+function resetStopButton() {
+  clearTimeout(stopArmed);
+  stopArmed = null;
+  $('stop').textContent = 'Stop';
+  $('stop').classList.remove('armed');
+}
+
 function stopWorkout() {
+  if (!stopArmed) {
+    $('stop').textContent = 'Confirm';
+    $('stop').classList.add('armed');
+    stopArmed = setTimeout(resetStopButton, 3000);
+    return;
+  }
+  resetStopButton();
   stopTimer();
   goBack();
 }

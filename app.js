@@ -1419,14 +1419,22 @@ function exportLog() {
   exportFile(`workout-log-${dayKey(new Date())}.json`, { log: store.log });
 }
 
-/** Ask for a file and pass its text to onText. Errors it throws are shown. */
-function pickFile(onText) {
+/**
+ * Ask for a file and pass its text to onText. Errors it throws are shown.
+ * With { multiple: true }, several files can be picked and onText gets
+ * [{ name, text }] for all of them instead.
+ */
+function pickFile(onText, { multiple = false } = {}) {
   const input = $('import-file');
   input.value = '';
+  input.multiple = multiple;
   input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-    try { onText(await file.text()); } catch (e) { toast(e.message, { error: true }); }
+    const files = [...input.files];
+    if (!files.length) return;
+    try {
+      if (multiple) onText(await Promise.all(files.map(async (f) => ({ name: f.name, text: await f.text() }))));
+      else onText(await files[0].text());
+    } catch (e) { toast(e.message, { error: true }); }
   };
   input.click();
 }
@@ -1473,13 +1481,25 @@ function validLogEntry(e) {
 const idsOf = (w) => [w.id, ...w.items.flatMap((it) => [it.id, ...(it.steps || []).map((s) => s.id)])];
 
 /**
- * Add the file's workouts as new workouts at the end of the list. They keep
+ * Add the files' workouts as new workouts at the end of the list. They keep
  * their ids (so an imported log still points at them) unless one is already
  * taken, e.g. the same workout imported twice: then the copy gets fresh ids.
+ * A file that can't be read is skipped; the others are still imported.
  */
-function importWorkouts(text) {
-  const list = readExport(text, 'workouts', validWorkout);
-  if (!list.length) throw new Error('That file has no workouts in it.');
+function importWorkouts(files) {
+  const list = [];
+  const failed = [];
+  for (const { name, text } of files) {
+    try {
+      const ws = readExport(text, 'workouts', validWorkout);
+      if (!ws.length) throw new Error('That file has no workouts in it.');
+      list.push(...ws);
+    } catch (e) { failed.push({ name, message: e.message }); }
+  }
+  if (!list.length) {
+    throw new Error(failed.length === 1 ? failed[0].message
+      : `None of those files could be imported. ${failed[0].name}: ${failed[0].message}`);
+  }
   const taken = new Set(store.workouts.flatMap(idsOf));
   const added = list.map((w) => {
     const ids = idsOf(w);
@@ -1496,7 +1516,10 @@ function importWorkouts(text) {
     setTimeout(() => row?.classList.remove('flash'), 900);
   }
   $('workout-list').lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  toast(added.length === 1 ? `Imported “${added[0].name || 'Untitled'}”` : `Imported ${added.length} workouts`);
+  const msg = added.length === 1 ? `Imported “${added[0].name || 'Untitled'}”` : `Imported ${added.length} workouts`;
+  if (!failed.length) return toast(msg);
+  const which = failed.length === 1 ? failed[0].name : `${failed.length} files`;
+  toast(`${msg}. Skipped ${which}: ${failed.length === 1 ? failed[0].message : 'they could not be read.'}`, { error: true });
 }
 
 /**
@@ -1519,7 +1542,7 @@ function importLog(text) {
     : `Imported ${entries(added.length)}${skipped ? ` (${skipped} already in the log)` : ''}`);
 }
 
-$('import-workout').addEventListener('click', () => pickFile(importWorkouts));
+$('import-workout').addEventListener('click', () => pickFile(importWorkouts, { multiple: true }));
 
 // ----- Toast: a short message near the bottom of the screen -----
 

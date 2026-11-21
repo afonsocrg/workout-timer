@@ -301,7 +301,8 @@ Workouts and the log can be exported to, and imported from, JSON files:
 - **Importing workouts** adds them at the end of the list. They keep their ids,
   so an imported log still points at them, unless any id is already taken
   (e.g. the same workout imported twice): then the copy gets fresh ids, like
-  Duplicate.
+  Duplicate. Several files can be picked at once; a file that can't be read is
+  skipped (and named in the message) while the others are still imported.
 - **Importing a log** merges: entries whose `id` is already in the log are
   skipped, the rest are added and the log is re-sorted by `endedAt`. Nothing
   is overwritten or removed, and importing the same file twice changes nothing.

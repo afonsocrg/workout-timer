@@ -1,7 +1,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Data model
+// Data model (full description and examples: docs/data-model.md)
 //
 // Workout   { id, name, items: Item[] }
 //           (every run starts with a fixed PREP_SEC "Get ready"; it's not part of the plan)
@@ -34,7 +34,7 @@ const repsText = (n) => `${n} rep${n === 1 ? '' : 's'}`;
 const isGenericName = (n) => !n || /^(work|rest|block \d+|interval \d+)$/i.test(n.trim());
 
 const DEFAULT_EXERCISE = 'Push-ups';
-const PREP_SEC = 10;
+const PREP_SEC = 5;
 const DEFAULT_REPS = 10;
 const MAX_REPS = 200;
 

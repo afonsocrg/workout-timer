@@ -6,27 +6,28 @@
 // Workout   { id, name, items: Item[] }
 //           (every run starts with a fixed PREP_SEC "Get ready"; it's not part of the plan)
 // Item      = Step | Intervals
-// Step      { id, type: 'work' | 'rest', name, dur, reps? }
-//             a work step with reps is done when the user taps Done; its dur is
-//             then only the expected time, used to estimate the workout length
-// Intervals { id, type: 'intervals', name, rounds, rest, steps: Step[] }
-//             repeats its steps for N rounds; rest = rest between rounds
+// Step      = Work | Rest
+// Work      { id, type: 'work', name, dur, reps? }
+//             with reps it's done when the user taps Done; its dur is then only
+//             the expected time, used to estimate the workout length
+// Rest      { id, type: 'rest', dur }
+// Intervals { id, type: 'intervals', name, rounds, restBetween, steps: Step[] }
+//             repeats its steps for N rounds, resting restBetween sec between them
+// LogEntry  { id, workoutId, name, status, startedAt, endedAt, planned, dur, segs }
+//             what actually happened in one run (see logEntry); times in ms
 //
-// Every item and step has a stable id, so per-step history (e.g. how long a
-// rep-based step usually takes) can be attached later.
+// Plan durations are in seconds; everything in the log is in milliseconds.
+// Every item and step has a stable id; log segments point back to it (stepId).
 // ---------------------------------------------------------------------------
-
-const STORE_KEY = 'workout-timer-v2';
-const OLD_KEY = 'workout-timer-plan-v1';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const work = (name, dur) => ({ id: uid(), type: 'work', name, dur });
-const rest = (dur) => ({ id: uid(), type: 'rest', name: '', dur }); // rests have no name: they're always "Rest"
-const intervals = (name, rounds, restDur, steps) =>
-  ({ id: uid(), type: 'intervals', name, rounds, rest: restDur, steps });
+const rest = (dur) => ({ id: uid(), type: 'rest', dur }); // rests have no name: they're always "Rest"
+const intervals = (name, rounds, restBetween, steps) =>
+  ({ id: uid(), type: 'intervals', name, rounds, restBetween, steps });
 
 const isStep = (it) => it.type === 'work' || it.type === 'rest';
-/** A rep-based step (a rest that used to be a rep step keeps its reps, but ignores them). */
+/** A rep-based work step. */
 const isReps = (s) => s.type === 'work' && s.reps > 0;
 const repsText = (n) => `${n} rep${n === 1 ? '' : 's'}`;
 
@@ -63,27 +64,6 @@ function newWorkout() {
   return { id: uid(), name: 'New workout', items: [intervals('Interval 1', 5, 15, [work(DEFAULT_EXERCISE, 30)])] };
 }
 
-/**
- * Convert the old "blocks" format (every block had rounds, steps, rest between
- * rounds and rest after) into items, picking the simplest item that fits.
- */
-function migrateBlocks(blocks) {
-  const items = [];
-  blocks.forEach((b, bi) => {
-    const steps = (b.steps || []).map((s) => (s.kind === 'rest' ? rest(s.dur) : work(s.name || '', s.dur)));
-    const rounds = b.rounds || 1;
-    const blockName = isGenericName(b.name) ? '' : b.name;
-    const nameOf = (s) => (isGenericName(s.name) ? blockName : s.name);
-    if (rounds === 1 && steps.length === 1 && steps[0].type === 'work') {
-      items.push(work(nameOf(steps[0]), steps[0].dur));
-    } else if (steps.length) {
-      items.push(intervals(blockName, rounds, b.rest || 0, steps));
-    }
-    if (bi < blocks.length - 1 && b.restAfter > 0) items.push(rest(b.restAfter));
-  });
-  return items;
-}
-
 /** "Interval N" with the first N that is not taken yet. */
 function nextIntervalName(items) {
   const used = new Set(items.map((i) => (i.name || '').trim().toLowerCase()));
@@ -92,55 +72,93 @@ function nextIntervalName(items) {
   return `Interval ${n}`;
 }
 
-/** Upgrade items saved by the short-lived split Intervals / Circuit format. */
-function normalizeItem(it) {
-  if (it.type === 'circuit') it.type = 'intervals';
-  if (it.type === 'intervals' && !Array.isArray(it.steps)) {
-    it.steps = [work('', it.work || 30)];
-    delete it.work;
-  }
+// ---------------------------------------------------------------------------
+// Storage (localStorage)
+//
+// Three keys, so editing a workout doesn't rewrite the whole history:
+//   workout-timer.version   schema version of the two below (a number)
+//   workout-timer.workouts  Workout[]
+//   workout-timer.log       LogEntry[]
+// On load, MIGRATIONS bring older data up to SCHEMA_VERSION.
+// ---------------------------------------------------------------------------
+
+const SCHEMA_VERSION = 1;
+const KEYS = {
+  version: 'workout-timer.version',
+  workouts: 'workout-timer.workouts',
+  log: 'workout-timer.log',
+};
+
+/**
+ * MIGRATIONS[n] upgrades { workouts, log } in place from version n to n + 1.
+ * To change the stored shape: bump SCHEMA_VERSION, add the step here, and log
+ * it in docs/decisions.md. Never edit a step that has shipped.
+ */
+const MIGRATIONS = {};
+
+/**
+ * Data saved before versioning (one 'workout-timer-v2' object). Workouts are
+ * kept, brought to version 1 (rests lose name/reps, Intervals rest →
+ * restBetween; workouts in even older formats are dropped). The history is
+ * dropped: its entries can't be rebuilt in the new shape.
+ */
+const LEGACY_KEYS = ['workout-timer-v2', 'workout-timer-plan-v1', 'workout-timer-ui'];
+
+function fromUnversioned() {
+  let workouts = null;
+  try {
+    const old = JSON.parse(localStorage.getItem('workout-timer-v2'));
+    if (old && Array.isArray(old.workouts)) {
+      workouts = old.workouts.filter((w) => Array.isArray(w.items));
+      const toStep = (st) => (st.type === 'rest' ? { id: st.id, type: 'rest', dur: st.dur } : st);
+      for (const w of workouts) {
+        w.items = w.items.filter((it) => it.type === 'work' || it.type === 'rest' || Array.isArray(it.steps)).map((it) => {
+          if (it.type !== 'intervals' && it.type !== 'circuit') return toStep(it);
+          const { rest: oldRest = 0, ...others } = it;
+          return { ...others, type: 'intervals', restBetween: it.restBetween ?? oldRest, steps: it.steps.map(toStep) };
+        });
+      }
+    }
+  } catch (_) { /* unreadable: start fresh */ }
+  return { workouts: workouts || seedWorkouts(), log: [] };
+}
+
+function readKey(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (_) { return null; }
+}
+
+function writeKey(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* ignore: full or blocked */ }
 }
 
 function loadStore() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && Array.isArray(s.workouts)) {
-      for (const w of s.workouts) {
-        if (!Array.isArray(w.items)) {
-          w.items = migrateBlocks(w.blocks || []);
-          delete w.blocks;
-        }
-        w.items.forEach(normalizeItem);
-        // Unnamed intervals get a default name, like new ones do
-        w.items.filter((it) => it.type === 'intervals' && !it.name.trim())
-          .forEach((it) => { it.name = nextIntervalName(w.items); });
-      }
-      return s;
-    }
-  } catch (_) { /* ignore */ }
-
-  const workouts = seedWorkouts();
-  // Migrate the single plan from the first version of the app, if present
-  try {
-    const old = JSON.parse(localStorage.getItem(OLD_KEY));
-    if (old && Array.isArray(old.blocks) && old.blocks.length) {
-      workouts.unshift({
-        id: uid(), name: 'My workout',
-        items: old.blocks.map((b) => intervals(b.name || '', b.rounds || 1, b.rest || 0, [work('', b.work || 30)])),
-      });
-    }
-  } catch (_) { /* ignore */ }
-  return { workouts };
+  const version = readKey(KEYS.version);
+  if (typeof version !== 'number') {
+    const data = fromUnversioned();
+    writeKey(KEYS.workouts, data.workouts);
+    writeKey(KEYS.log, data.log);
+    writeKey(KEYS.version, SCHEMA_VERSION);
+    try { LEGACY_KEYS.forEach((k) => localStorage.removeItem(k)); } catch (_) { /* ignore */ }
+    return data;
+  }
+  const data = {
+    workouts: Array.isArray(readKey(KEYS.workouts)) ? readKey(KEYS.workouts) : [],
+    log: Array.isArray(readKey(KEYS.log)) ? readKey(KEYS.log) : [],
+  };
+  if (version < SCHEMA_VERSION) {
+    for (let v = version; v < SCHEMA_VERSION; v++) MIGRATIONS[v](data);
+    writeKey(KEYS.workouts, data.workouts);
+    writeKey(KEYS.log, data.log);
+    writeKey(KEYS.version, SCHEMA_VERSION);
+  }
+  return data;
 }
 
-let store = loadStore();
-// History of completed workouts: { id, at (ms timestamp), workoutId, name, dur (sec) }
-if (!Array.isArray(store.log)) store.log = [];
-save();
+const store = loadStore();
 
-function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (_) { /* ignore */ }
-}
+/** Save the workouts (cheap: the log is stored separately). */
+function save() { writeKey(KEYS.workouts, store.workouts); }
+function saveLog() { writeKey(KEYS.log, store.log); }
 
 const findWorkout = (id) => store.workouts.find((w) => w.id === id);
 
@@ -175,9 +193,10 @@ function labelOf(kind, ...names) {
 }
 
 function stepSegs(s, parentName) {
-  if (isReps(s)) return [{ type: 'work', label: labelOf('work', s.name, parentName), dur: s.dur, reps: s.reps }];
-  if (!(s.dur > 0)) return [];
-  return [{ type: s.type, label: s.type === 'rest' ? 'Rest' : labelOf('work', s.name, parentName), dur: s.dur }];
+  if (!(s.dur > 0) && !isReps(s)) return [];
+  const seg = { type: s.type, label: s.type === 'rest' ? 'Rest' : labelOf('work', s.name, parentName), dur: s.dur, stepId: s.id };
+  if (isReps(s)) seg.reps = s.reps;
+  return [seg];
 }
 
 /** How a step's amount reads in summaries: "15 reps" or "0:30". */
@@ -190,8 +209,8 @@ function itemSegs(it) {
   const round = it.steps.flatMap((s) => stepSegs(s, it.name));
   if (!round.length) return segs;
   for (let r = 1; r <= it.rounds; r++) {
-    segs.push(...round.map((s) => ({ ...s })));
-    if (r < it.rounds && it.rest > 0) segs.push({ type: 'rest', label: 'Rest', dur: it.rest });
+    segs.push(...round.map((s) => ({ ...s, round: r })));
+    if (r < it.rounds && it.restBetween > 0) segs.push({ type: 'rest', label: 'Rest', dur: it.restBetween });
   }
   return segs;
 }
@@ -203,10 +222,12 @@ function buildSegments(w) {
   for (const it of w.items) {
     for (const s of itemSegs(it)) {
       const prev = segs[segs.length - 1];
-      // Back-to-back rests (e.g. intervals ending in rest, then a Rest item) become one
+      // Back-to-back rests (e.g. intervals ending in rest, then a Rest item) become
+      // one, which then no longer belongs to a single step or round
       if (s.type === 'rest' && prev?.type === 'rest') {
         prev.dur += s.dur;
-        if (prev.label === 'Rest') prev.label = s.label;
+        delete prev.stepId;
+        delete prev.round;
       } else segs.push(s);
     }
   }
@@ -397,6 +418,7 @@ function startWorkout(w) {
     idx: 0,
     segStart: performance.now(),
     segEnd: performance.now() + segs[0].dur * 1000,
+    pausedAt: 0,
     lastBeepSec: null,
   });
 
@@ -405,6 +427,7 @@ function startWorkout(w) {
   if (segs[0].dur > 3) startBeep(segs[0].dur);
   else countdownBeep();
 
+  segs[0].startedAt = wallAt(timer.segStart);
   show('run');
   renderRun();
   clearInterval(timer.interval);
@@ -427,6 +450,28 @@ function numberWorkRounds(segs) {
   segs.workTotal = total;
 }
 
+/** Wall-clock time (ms since epoch) of a performance.now() timestamp. */
+const wallAt = (perf) => Math.round(Date.now() - performance.now() + perf);
+
+/**
+ * Close the current segment for the log. activeEnd: when it stopped counting
+ * (performance.now() time; segStart is pushed forward by pauses, so this
+ * excludes them); wallEnd: when it actually ended.
+ */
+function endSegment(activeEnd, wallEnd = activeEnd, skipped = false) {
+  const seg = timer.segs[timer.idx];
+  seg.took = Math.max(0, Math.round(activeEnd - timer.segStart));
+  seg.endedAt = wallAt(wallEnd);
+  if (skipped) seg.skipped = true;
+}
+
+function enterNextSegment(at) {
+  timer.idx++;
+  timer.segStart = at;
+  timer.segs[timer.idx].startedAt = wallAt(at);
+  timer.lastBeepSec = null;
+}
+
 function tick() {
   if (!timer.running || timer.paused) return;
   const now = performance.now();
@@ -434,11 +479,10 @@ function tick() {
   // Advance through any segments that have elapsed (handles throttled tabs too).
   // A rep segment never elapses: it waits for the user to tap Done.
   while (!timer.segs[timer.idx].reps && now >= timer.segEnd) {
+    endSegment(timer.segEnd);
     if (timer.idx >= timer.segs.length - 1) return finishWorkout();
-    timer.idx++;
-    timer.segStart = timer.segEnd;
+    enterNextSegment(timer.segEnd);
     timer.segEnd += timer.segs[timer.idx].dur * 1000;
-    timer.lastBeepSec = null;
     goBeep();
   }
 
@@ -470,20 +514,18 @@ function togglePause() {
   renderRun();
 }
 
-/** Move on to the next segment (Skip, or Done on a rep segment). */
-function skipSegment() {
+/** Move on to the next segment: Skip, or (done) Done on a rep segment. */
+function skipSegment({ done = false } = {}) {
   if (!timer.running) return;
   const now = performance.now();
   const seg = timer.segs[timer.idx];
-  // A rep segment takes as long as it takes: log the real time, not the estimate
-  if (seg.reps) seg.dur = Math.round(((timer.paused ? timer.pausedAt : now) - timer.segStart) / 1000);
+  endSegment(timer.paused ? timer.pausedAt : now, now, !(done && seg.reps));
   if (timer.idx >= timer.segs.length - 1) return finishWorkout();
-  timer.idx++;
+  enterNextSegment(now);
   const next = timer.segs[timer.idx];
-  timer.lastBeepSec = null;
   // Reps have no clock to hold, so landing on one while paused resumes
   if (timer.paused && next.reps) { timer.paused = false; unlockAudio(); requestWakeLock(); }
-  timer.segStart = timer.pausedAt = now;
+  timer.pausedAt = now;
   if (timer.paused) timer.pausedLeft = next.dur * 1000;
   else { timer.segEnd = now + next.dur * 1000; goBeep(); }
   renderRun();
@@ -491,7 +533,7 @@ function skipSegment() {
 
 /** The big middle button: Done on a rep segment, Pause / Resume otherwise. */
 function mainAction() {
-  if (timer.segs[timer.idx]?.reps && !timer.paused) skipSegment();
+  if (timer.segs[timer.idx]?.reps && !timer.paused) skipSegment({ done: true });
   else togglePause();
 }
 
@@ -529,14 +571,47 @@ function finishWorkout() {
   finishBeep();
   if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
   const w = timer.workout;
-  store.log.push({ id: uid(), at: Date.now(), workoutId: w.id, name: w.name || 'Untitled', dur: totalOf(timer.segs) });
-  save();
+  const entry = logEntry(w, timer.segs);
+  store.log.push(entry);
+  saveLog();
 
   const week = workoutsThisWeek();
   $('done-name').textContent = w.name;
-  $('done-time').textContent = fmt(totalOf(timer.segs));
+  $('done-time').textContent = fmt(entry.dur / 1000);
   $('done-week').textContent = week === 1 ? 'First workout this week' : `That's ${week} this week`;
   show('done');
+}
+
+/**
+ * What actually happened in a run, independent of later edits to the workout.
+ * "Get ready" is left out. All times are in ms. Per segment: planned = planned
+ * length (or the estimate, for reps); took = time spent, without pauses;
+ * startedAt / endedAt = wall clock, so endedAt - startedAt - took = time paused.
+ */
+function logEntry(w, segs) {
+  const ran = segs.filter((s) => s.type !== 'prep');
+  return {
+    id: uid(),
+    workoutId: w.id,
+    name: w.name || 'Untitled',
+    status: 'done',
+    startedAt: ran[0].startedAt,
+    endedAt: ran[ran.length - 1].endedAt,
+    planned: totalOf(ran) * 1000,
+    dur: ran.reduce((a, s) => a + s.took, 0),
+    segs: ran.map((s) => ({
+      type: s.type,
+      label: s.label,
+      ...(s.stepId && { stepId: s.stepId }),
+      ...(s.round && { round: s.round }),
+      planned: s.dur * 1000,
+      ...(s.reps && { reps: s.reps }),
+      took: s.took,
+      ...(s.skipped && { skipped: true }),
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+    })),
+  };
 }
 
 function goBack() {
@@ -895,12 +970,12 @@ function resetCalendar() {
 function workoutsThisWeek() {
   const now = new Date();
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-  return store.log.filter((e) => e.at >= monday.getTime()).length;
+  return store.log.filter((e) => e.endedAt >= monday.getTime()).length;
 }
 
 function workoutsInMonth(year, month) {
   return store.log.filter((e) => {
-    const d = new Date(e.at);
+    const d = new Date(e.endedAt);
     return d.getFullYear() === year && d.getMonth() === month;
   }).length;
 }
@@ -908,7 +983,7 @@ function workoutsInMonth(year, month) {
 function logByDay() {
   const map = new Map();
   for (const e of store.log) {
-    const k = dayKey(new Date(e.at));
+    const k = dayKey(new Date(e.endedAt));
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(e);
   }
@@ -1248,12 +1323,12 @@ function openLog(focusDay) {
       });
     group.appendChild(el('div', 'log-day-title', title));
 
-    for (const e of byDay.get(k).sort((a, b) => a.at - b.at)) {
+    for (const e of byDay.get(k).sort((a, b) => a.endedAt - b.endedAt)) {
       const row = el('div', 'log-entry');
       row.append(
-        el('span', 'log-time', new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        el('span', 'log-time', new Date(e.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
         el('span', 'log-name', e.name),
-        el('span', 'log-dur', fmt(e.dur)),
+        el('span', 'log-dur', fmt(e.dur / 1000)), // log times are in ms
       );
       const del = el('button', 'icon-btn trash');
       del.type = 'button';
@@ -1261,7 +1336,7 @@ function openLog(focusDay) {
       del.innerHTML = TRASH_SVG;
       armToConfirm(del, () => {
         store.log = store.log.filter((x) => x.id !== e.id);
-        save();
+        saveLog();
         const y0 = window.scrollY;
         openLog();
         window.scrollTo(0, y0);
@@ -1347,6 +1422,29 @@ function bindDelete(btn, list, obj) {
   });
 }
 
+/**
+ * A rest has no name or reps, so flipping a work step to rest drops them. They
+ * are kept here (in memory, by step id) so flipping back restores them while
+ * the app stays open.
+ */
+const flippedAway = new Map();
+
+/** Turn a Work step into a Rest or back, in place (keeps its id and position). */
+function flipStep(s) {
+  if (s.type === 'work') {
+    flippedAway.set(s.id, { name: s.name, reps: s.reps });
+    s.type = 'rest';
+    delete s.name;
+    delete s.reps;
+  } else {
+    const { name = '', reps } = flippedAway.get(s.id) || {};
+    flippedAway.delete(s.id);
+    s.type = 'work';
+    s.name = name;
+    if (reps) s.reps = reps;
+  }
+}
+
 /** A Work/Rest row: used both as a top-level item and inside intervals. */
 function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
   const row = clone('step-tpl');
@@ -1355,6 +1453,7 @@ function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
   let paintAmount = () => {};
   const paintKind = () => {
     paintAmount(); // a rest never counts reps
+    stepName.value = s.name ?? '';
     kind.classList.toggle('is-rest', s.type === 'rest');
     kind.setAttribute('aria-label', s.type === 'rest' ? 'Rest (tap to make it work)' : 'Work (tap to make it rest)');
     row.classList.toggle('is-rest', s.type === 'rest');
@@ -1362,13 +1461,11 @@ function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
   };
   paintKind();
   kind.addEventListener('click', () => {
-    s.type = s.type === 'rest' ? 'work' : 'rest';
-    // The name is kept while it's a rest, so switching back restores it
+    flipStep(s);
     paintKind();
     edited();
   });
 
-  stepName.value = s.name;
   stepName.addEventListener('input', () => { s.name = stepName.value; save(); });
 
   paintAmount = bindStepAmount(row.querySelector('.dur'), s);
@@ -1419,7 +1516,7 @@ function renderIntervals(it, list) {
     it.rounds = n;
     restBtn.classList.toggle('hidden', n < 2);
   }, 1, 99, { render: (n) => renderStat(roundsBtn, n, n === 1 ? 'round' : 'rounds') });
-  bindDuration(restBtn, 'Rest between rounds', () => it.rest, (v) => { it.rest = v; }, 3600,
+  bindDuration(restBtn, 'Rest between rounds', () => it.restBetween, (v) => { it.restBetween = v; }, 3600,
     { render: (v) => renderStat(restBtn, v ? fmt(v) : 'No', 'rest') });
 
   const stepsEl = node.querySelector('.steps');
@@ -1482,7 +1579,6 @@ $('edit-back').addEventListener('click', openWorkouts);
 // blocks added while editing start expanded.
 
 const collapsed = new Set();
-try { localStorage.removeItem('workout-timer-ui'); } catch (_) { /* ignore: old remembered state */ }
 
 function setCollapsed(id, on) {
   if (on) collapsed.add(id); else collapsed.delete(id);

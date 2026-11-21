@@ -20,6 +20,11 @@ A small, installable interval timer for workouts. Plain HTML, CSS and JavaScript
 
 Workouts are stored in the browser's `localStorage`, on the device.
 
+## Docs
+
+- [Data model](docs/data-model.md): how workout plans and history are stored, with examples
+- [Decision log](docs/decisions.md): why things are the way they are
+
 ## Run locally
 
 ```sh

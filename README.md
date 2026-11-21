@@ -25,6 +25,7 @@ Workouts are stored in the browser's `localStorage`, on the device.
 
 - [Data model](docs/data-model.md): how workout plans and history are stored, with examples
 - [Decision log](docs/decisions.md): why things are the way they are
+- [Backlog](docs/backlog.md): ideas to spec before building
 
 ## Run locally
 

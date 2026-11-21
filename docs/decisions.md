@@ -80,7 +80,10 @@ while migrating data for the Work/Rest split anyway.
 
 **Decision.** A Work step becomes rep-based when it has `reps` set. Its `dur`
 then holds the expected time. The step picker has a Time | Reps switch (Time by
-default); Reps mode shows a reps wheel plus "Takes about" min/sec wheels.
+default); Reps mode shows only a reps wheel, with a quiet "Takes about 0:45 ›"
+link under it that swaps in the min/sec wheels for the estimate. (At first all
+three wheels showed side by side, but that gave the estimate as much weight as
+the reps.)
 
 **Why.** Considered: two Work types, or a mode field on each step. An optional
 key is the smallest change: existing data stays valid with no migration, and

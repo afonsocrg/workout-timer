@@ -627,9 +627,6 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   backface-visibility: hidden;
 }
 .wheel-unit { position: absolute; left: 100%; color: var(--muted); font-size: 15px; margin-left: -6px; pointer-events: none; }
-/* Three wheels (reps · min · sec) need tighter spacing, with a wider gap between groups */
-.wheels-row.dense { gap: 28px; }
-.wheels-row.dense .group-start { margin-left: 22px; }
 
 /* Time / Reps switch */
 .seg { display: flex; gap: 2px; padding: 3px; margin: 4px 0 10px; background: var(--bg); border-radius: 10px; }
@@ -645,7 +642,20 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 }
 .seg button.on { background: var(--surface-hi); color: var(--text); }
 
-/* Labels over groups of wheels ("Reps", "Takes about") */
+/* Quiet link under the wheels (e.g. a rep step's time estimate) */
+.sheet-footer {
+  display: block;
+  margin: 10px auto 0;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.sheet-footer:active { color: var(--text); }
+
+/* Labels over groups of wheels ("Takes about") */
 .wheel-labels { position: relative; height: 18px; margin-bottom: 2px; }
 .wheel-label {
   position: absolute;

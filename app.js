@@ -722,10 +722,12 @@ function createWheel(col, onSettle) {
  * Open the picker sheet.
  * columns: wheel column specs (see createWheel, plus an optional `group` label
  * shown above a run of columns); onChange(values[]) fires live.
+ * footer (optional): a quiet link under the wheels that swaps in another view,
+ *   { text, onClick() => view }, where a view is { columns, onChange, footer? }
  * modes (optional): a segmented switch above the wheels,
- *   { options: { key: label }, current: key, onSelect(key) => { columns, onChange } }
+ *   { options: { key: label }, current: key, onSelect(key) => view }
  */
-function openPicker({ title, anchor, columns, onChange, modes }) {
+function openPicker({ title, anchor, columns, onChange, footer, modes }) {
   closePicker();
   $('sheet-title').textContent = title;
   anchor?.classList.add('active');
@@ -748,27 +750,24 @@ function openPicker({ title, anchor, columns, onChange, modes }) {
           x.classList.toggle('on', x === b);
           x.setAttribute('aria-pressed', String(x === b));
         });
-        const next = modes.onSelect(key);
-        setWheels(next.columns, next.onChange);
+        setWheels(modes.onSelect(key));
       });
       seg.appendChild(b);
     }
   }
-  setWheels(columns, onChange);
+  setWheels({ columns, onChange, footer });
 }
 
-/** Fill the (visible) sheet with wheels, replacing any that are there. */
-function setWheels(columns, onChange) {
+/** Fill the (visible) sheet with a view's wheels and footer, replacing what's there. */
+function setWheels({ columns, onChange, footer }) {
   const row = $('wheels-row');
   row.replaceChildren();
-  row.classList.toggle('dense', columns.length > 2);
   const current = columns.map((c) => c.index);
   sheet.wheels = columns.map((col, ci) => {
     const wheel = createWheel(col, (i) => {
       current[ci] = i;
       onChange(current.map((idx, k) => columns[k].values[idx]));
     });
-    if (ci > 0 && col.group !== columns[ci - 1].group) wheel.el.classList.add('group-start');
     row.appendChild(wheel.el);
     return wheel;
   });
@@ -788,6 +787,17 @@ function setWheels(columns, onChange) {
     label.style.width = `${els[els.length - 1].right - els[0].left}px`;
     labels.appendChild(label);
   }
+
+  // With a mode switch the footer keeps its space even when empty, so
+  // switching modes doesn't make the sheet jump in height
+  const foot = $('sheet-footer');
+  foot.classList.toggle('hidden', !footer && !sheet.modes);
+  foot.style.visibility = footer ? '' : 'hidden';
+  foot.textContent = footer?.text ?? '';
+  foot.onclick = footer && (() => {
+    sheet.wheels.forEach((w) => w.flush()); // keep a value that is still settling
+    setWheels(footer.onClick());
+  });
 }
 
 function closePicker() {
@@ -860,14 +870,19 @@ function bindStepAmount(btn, s) {
   ];
   const setDur = (m, sec) => { s.dur = clamp(m * 60 + sec, 0, 3600); };
   const commit = () => { render(); edited(); };
+  // Reps lead; the time they take only feeds the workout's estimated length,
+  // so it sits behind a quiet link under the reps wheel
+  const estimate = () => ({
+    columns: durColumns('Takes about'),
+    onChange: ([m, sec]) => { setDur(m, sec); commit(); },
+    footer: { text: `‹ Back to ${repsText(s.reps)}`, onClick: modes.reps },
+  });
   const modes = {
     time: () => ({ columns: durColumns(), onChange: ([m, sec]) => { setDur(m, sec); commit(); } }),
     reps: () => ({
-      columns: [
-        { values: range(1, MAX_REPS), index: clamp(s.reps, 1, MAX_REPS) - 1, unit: 'reps', group: 'Reps' },
-        ...durColumns('Takes about'),
-      ],
-      onChange: ([n, m, sec]) => { s.reps = n; setDur(m, sec); commit(); },
+      columns: [{ values: range(1, MAX_REPS), index: clamp(s.reps, 1, MAX_REPS) - 1, unit: 'reps' }],
+      onChange: ([n]) => { s.reps = n; commit(); },
+      footer: { text: `Takes about ${fmt(s.dur)} ›`, onClick: estimate },
     }),
   };
 

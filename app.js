@@ -1124,6 +1124,7 @@ function openWorkouts() {
     more.innerHTML = MORE_SVG;
     more.addEventListener('click', () => (menuOpenFor === more ? closeMenu() : openMenu(more, [
       { label: 'Duplicate', action: () => duplicateWorkout(w) },
+      { label: 'Export', action: () => exportWorkout(w) },
     ])));
 
     const del = el('button', 'icon-btn trash');
@@ -1372,6 +1373,164 @@ function openLog(focusDay) {
       setTimeout(() => target.classList.remove('flash'), 1200);
     }
   }
+}
+
+$('log-more').addEventListener('click', () => {
+  const btn = $('log-more');
+  if (menuOpenFor === btn) return closeMenu();
+  openMenu(btn, [
+    ...(store.log.length ? [{ label: 'Export log', action: exportLog }] : []),
+    { label: 'Import log…', action: () => pickFile(importLog) },
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// Import / export (JSON files)
+//
+// { app: 'workout-timer', version, exportedAt, workouts?: Workout[], log?: LogEntry[] }
+// `version` is the SCHEMA_VERSION the data is in; a file from another version
+// is refused (no migrations on import yet).
+// ---------------------------------------------------------------------------
+
+const EXPORT_APP = 'workout-timer';
+
+/** Save a JSON file: the share sheet on phones (iOS can't "download"), a download elsewhere. */
+function exportFile(filename, payload) {
+  const text = JSON.stringify({ app: EXPORT_APP, version: SCHEMA_VERSION, exportedAt: new Date().toISOString(), ...payload }, null, 2);
+  const file = new File([text], filename, { type: 'application/json' });
+  if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+    navigator.share({ files: [file] }).catch(() => {}); // cancelled: nothing to do
+    return;
+  }
+  const a = el('a');
+  a.href = URL.createObjectURL(file);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const slug = (s) => (s || 'workout').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workout';
+
+function exportWorkout(w) {
+  exportFile(`${slug(w.name)}.workout.json`, { workouts: [w] });
+}
+
+function exportLog() {
+  exportFile(`workout-log-${dayKey(new Date())}.json`, { log: store.log });
+}
+
+/** Ask for a file and pass its text to onText. Errors it throws are shown. */
+function pickFile(onText) {
+  const input = $('import-file');
+  input.value = '';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try { onText(await file.text()); } catch (e) { toast(e.message, { error: true }); }
+  };
+  input.click();
+}
+
+/** Parse an exported file and return data[key], or throw an Error saying what's wrong. */
+function readExport(text, key, valid) {
+  let data;
+  try { data = JSON.parse(text); } catch (_) { throw new Error("That file isn't valid JSON."); }
+  if (data?.app !== EXPORT_APP) throw new Error("That file wasn't exported from this app.");
+  if (data.version !== SCHEMA_VERSION) {
+    throw new Error(data.version > SCHEMA_VERSION
+      ? 'That file comes from a newer version of the app. Update the app, then try again.'
+      : `That file comes from an older version of the app (v${data.version}) and can't be imported.`);
+  }
+  const list = data[key];
+  if (!Array.isArray(list)) throw new Error(key === 'log' ? 'That file has no log in it.' : 'That file has no workouts in it.');
+  if (!list.every(valid)) throw new Error('That file is damaged: some of its data is not in the expected shape.');
+  return list;
+}
+
+const isStr = (v) => typeof v === 'string';
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const isCount = (v, max) => Number.isInteger(v) && v >= 1 && v <= max;
+
+function validStep(s) {
+  if (!s || !isStr(s.id) || !isNum(s.dur) || s.dur < 0) return false;
+  if (s.type === 'rest') return true;
+  return s.type === 'work' && isStr(s.name) && (s.reps === undefined || isCount(s.reps, MAX_REPS));
+}
+
+function validWorkout(w) {
+  return !!w && isStr(w.id) && isStr(w.name) && Array.isArray(w.items) && w.items.every((it) => validStep(it) || (
+    it?.type === 'intervals' && isStr(it.id) && isStr(it.name) && isCount(it.rounds, 99)
+    && isNum(it.restBetween) && it.restBetween >= 0
+    && Array.isArray(it.steps) && it.steps.length > 0 && it.steps.every(validStep)));
+}
+
+function validLogEntry(e) {
+  return !!e && isStr(e.id) && isStr(e.workoutId) && isStr(e.name) && isStr(e.status)
+    && [e.startedAt, e.endedAt, e.planned, e.dur].every(isNum) && Array.isArray(e.segs);
+}
+
+/** Every id in a workout: its own, its items' and their steps'. */
+const idsOf = (w) => [w.id, ...w.items.flatMap((it) => [it.id, ...(it.steps || []).map((s) => s.id)])];
+
+/**
+ * Add the file's workouts as new workouts at the end of the list. They keep
+ * their ids (so an imported log still points at them) unless one is already
+ * taken, e.g. the same workout imported twice: then the copy gets fresh ids.
+ */
+function importWorkouts(text) {
+  const list = readExport(text, 'workouts', validWorkout);
+  if (!list.length) throw new Error('That file has no workouts in it.');
+  const taken = new Set(store.workouts.flatMap(idsOf));
+  const added = list.map((w) => {
+    const ids = idsOf(w);
+    if (ids.some((id) => taken.has(id)) || new Set(ids).size !== ids.length) reId(w);
+    idsOf(w).forEach((id) => taken.add(id));
+    return w;
+  });
+  store.workouts.push(...added);
+  save();
+  openWorkouts();
+  for (const w of added) {
+    const row = $('workout-list').querySelector(`[data-id="${w.id}"]`);
+    row?.classList.add('flash');
+    setTimeout(() => row?.classList.remove('flash'), 900);
+  }
+  $('workout-list').lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  toast(added.length === 1 ? `Imported “${added[0].name || 'Untitled'}”` : `Imported ${added.length} workouts`);
+}
+
+/**
+ * Merge the file's entries into the log. Entries already in it (same id) are
+ * skipped, so importing the same file twice changes nothing.
+ */
+function importLog(text) {
+  const list = readExport(text, 'log', validLogEntry);
+  const have = new Set(store.log.map((e) => e.id));
+  const added = list.filter((e) => !have.has(e.id) && have.add(e.id));
+  if (added.length) {
+    store.log.push(...added);
+    store.log.sort((a, b) => a.endedAt - b.endedAt); // stored oldest first
+    saveLog();
+  }
+  openLog();
+  const entries = (n) => `${n} ${n === 1 ? 'entry' : 'entries'}`;
+  const skipped = list.length - added.length;
+  toast(!added.length ? 'Nothing new: everything in that file is already in the log'
+    : `Imported ${entries(added.length)}${skipped ? ` (${skipped} already in the log)` : ''}`);
+}
+
+$('import-workout').addEventListener('click', () => pickFile(importWorkouts));
+
+// ----- Toast: a short message near the bottom of the screen -----
+
+let toastTimer = null;
+function toast(message, { error = false } = {}) {
+  const t = $('toast');
+  t.textContent = message;
+  t.classList.toggle('error', error);
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), error ? 5000 : 3000);
 }
 
 // ----- Editor -----

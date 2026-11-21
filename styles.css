@@ -65,6 +65,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: grid;
   place-items: center;
 }
+.header-actions { display: flex; gap: 8px; }
+.header-action.more svg { fill: currentColor; stroke: none; }
+.header-action.active { background: var(--surface-hi); }
 .header-action svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
 .section-title {
@@ -753,3 +756,22 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .done-sub { font-size: 20px; }
 .done-week { font-size: 16px; font-weight: 600; margin: 8px 0 32px; opacity: 0.75; }
 #done .btn.primary { background: #111; color: var(--text); min-width: 160px; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 76px); /* above the tab bar */
+  z-index: 20;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--surface-hi);
+  color: var(--text);
+  font-size: 15px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  animation: menu-in 0.12s ease-out;
+}
+.toast.error { background: var(--danger); color: #fff; }

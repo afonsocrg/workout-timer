@@ -43,18 +43,28 @@
   <main id="workouts" class="view page tabbed hidden">
     <header class="page-header with-action">
       <h1>Workouts</h1>
-      <button id="add-workout" class="header-action" type="button" aria-label="New workout">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
+      <div class="header-actions">
+        <button id="import-workout" class="header-action" type="button" aria-label="Import a workout from a file">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>
+        </button>
+        <button id="add-workout" class="header-action" type="button" aria-label="New workout">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
     </header>
     <div id="workout-list" class="list"></div>
   </main>
 
   <!-- Log tab: completed workouts -->
   <main id="log" class="view page tabbed hidden">
-    <header class="page-header">
-      <h1>Log</h1>
-      <div id="log-stats" class="log-stats"></div>
+    <header class="page-header with-action">
+      <div>
+        <h1>Log</h1>
+        <div id="log-stats" class="log-stats"></div>
+      </div>
+      <button id="log-more" class="header-action more" type="button" aria-label="Import or export the log" aria-haspopup="menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      </button>
     </header>
     <div id="log-list"></div>
   </main>
@@ -155,6 +165,12 @@
       <button id="sheet-footer" class="sheet-footer hidden" type="button"></button>
     </div>
   </div>
+
+  <!-- Short messages, e.g. after an import -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- File picker for imports (opened by pickFile) -->
+  <input id="import-file" type="file" accept=".json,application/json" hidden />
 
   <!-- Popover menu (filled by openMenu) -->
   <div id="menu" class="menu hidden" role="menu"></div>

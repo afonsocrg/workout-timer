@@ -7,6 +7,28 @@ Format: **date — title**, then *Decision*, *Why*, and (if any) *Consequences*.
 
 ---
 
+## 2026-11-21 — Import / export as versioned JSON files
+
+**Decision.** A workout, or the whole log, can be exported to a JSON file
+tagged with `app` and the schema `version`, and imported again. Import refuses
+files from another version. Imported workouts are added as new workouts,
+keeping their ids unless one is already taken (then all are regenerated).
+Imported log entries are merged in by `id`; existing entries are never
+overwritten or removed.
+
+**Why.** Moving to a new device, backups, and sharing a workout. Merging is
+the safe choice for the log: it can't lose history, and since entry ids are
+unique, re-importing the same file (or an overlapping backup) is harmless.
+Replacing the log was considered, but it destroys data and is easy to do by
+mistake. Keeping workout ids when they are free means a log moved alongside
+its workouts still links to them (`workoutId`, `stepId`); regenerating them
+on a clash keeps ids unique within the store.
+
+**Consequences.**
+- After a schema change, older export files can't be imported until import
+  runs `MIGRATIONS` too.
+- There's no "replace the log" or "export all workouts" yet.
+
 ## 2026-11-21 — Versioned storage, split into workouts and log
 
 **Decision.** Storage uses three keys: `workout-timer.version`,

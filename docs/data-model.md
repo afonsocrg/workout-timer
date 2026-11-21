@@ -283,6 +283,29 @@ converted once and the old keys (`workout-timer-v2`, `workout-timer-plan-v1`,
 - **The history is dropped:** old entries can't be rebuilt in the new shape.
 - With nothing to convert, the app starts with the built-in sample workouts.
 
+## Export files
+
+Workouts and the log can be exported to, and imported from, JSON files:
+
+```
+{ "app": "workout-timer", "version": 1, "exportedAt": "2026-11-21T10:00:00.000Z",
+  "workouts": Workout[] }          // or "log": LogEntry[]
+```
+
+- **Export:** one workout (⋯ menu on the Workouts tab), saved as
+  `<name>.workout.json`; or the whole log (⋯ on the Log tab), saved as
+  `workout-log-YYYY-MM-DD.json`. On phones this opens the share sheet.
+- **`version`** is the `SCHEMA_VERSION` the data is in. Import refuses a file
+  with any other version (no migrations on import yet), a file without
+  `app: "workout-timer"`, and data not in the shapes above.
+- **Importing workouts** adds them at the end of the list. They keep their ids,
+  so an imported log still points at them, unless any id is already taken
+  (e.g. the same workout imported twice): then the copy gets fresh ids, like
+  Duplicate.
+- **Importing a log** merges: entries whose `id` is already in the log are
+  skipped, the rest are added and the log is re-sorted by `endedAt`. Nothing
+  is overwritten or removed, and importing the same file twice changes nothing.
+
 ## Not stored
 
 - Which Intervals blocks are collapsed in the editor (view state only).

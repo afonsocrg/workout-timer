@@ -6,7 +6,9 @@
 // Workout   { id, name, items: Item[] }
 //           (every run starts with a fixed PREP_SEC "Get ready"; it's not part of the plan)
 // Item      = Step | Intervals
-// Step      { id, type: 'work' | 'rest', name, dur }
+// Step      { id, type: 'work' | 'rest', name, dur, reps? }
+//             a work step with reps is done when the user taps Done; its dur is
+//             then only the expected time, used to estimate the workout length
 // Intervals { id, type: 'intervals', name, rounds, rest, steps: Step[] }
 //             repeats its steps for N rounds; rest = rest between rounds
 //
@@ -24,12 +26,17 @@ const intervals = (name, rounds, restDur, steps) =>
   ({ id: uid(), type: 'intervals', name, rounds, rest: restDur, steps });
 
 const isStep = (it) => it.type === 'work' || it.type === 'rest';
+/** A rep-based step (a rest that used to be a rep step keeps its reps, but ignores them). */
+const isReps = (s) => s.type === 'work' && s.reps > 0;
+const repsText = (n) => `${n} rep${n === 1 ? '' : 's'}`;
 
 /** Names that say nothing beyond what the background colour already shows. */
 const isGenericName = (n) => !n || /^(work|rest|block \d+|interval \d+)$/i.test(n.trim());
 
 const DEFAULT_EXERCISE = 'Push-ups';
 const PREP_SEC = 10;
+const DEFAULT_REPS = 10;
+const MAX_REPS = 200;
 
 function seedWorkouts() {
   return [
@@ -168,9 +175,13 @@ function labelOf(kind, ...names) {
 }
 
 function stepSegs(s, parentName) {
+  if (isReps(s)) return [{ type: 'work', label: labelOf('work', s.name, parentName), dur: s.dur, reps: s.reps }];
   if (!(s.dur > 0)) return [];
   return [{ type: s.type, label: s.type === 'rest' ? 'Rest' : labelOf('work', s.name, parentName), dur: s.dur }];
 }
+
+/** How a step's amount reads in summaries: "15 reps" or "0:30". */
+const amountText = (s) => (isReps(s) ? repsText(s.reps) : fmt(s.dur));
 
 /** Flatten one item into timed segments. */
 function itemSegs(it) {
@@ -214,10 +225,10 @@ const itemDuration = (it) => totalOf(itemSegs(it));
 function describeWorkout(w) {
   const tokens = [];
   for (const it of w.items) {
-    if (it.type === 'work') tokens.push(isGenericName(it.name) ? fmt(it.dur) : it.name.trim());
+    if (it.type === 'work') tokens.push(isGenericName(it.name) ? amountText(it) : it.name.trim());
     else if (it.type === 'intervals') {
       const works = it.steps.filter((s) => s.type === 'work');
-      tokens.push(works.length === 1 ? `${it.rounds}×${fmt(works[0].dur)}` : `${it.rounds}× ${it.name.trim() || 'intervals'}`);
+      tokens.push(works.length === 1 ? `${it.rounds}×${amountText(works[0])}` : `${it.rounds}× ${it.name.trim() || 'intervals'}`);
     }
   }
   // Collapse runs of identical single steps: 0:30 · 0:30 · 0:30 → 3×0:30
@@ -364,7 +375,8 @@ const timer = {
   workout: null,
   segs: [],
   idx: 0,
-  segEnd: 0,        // performance.now() timestamp when current segment ends
+  segStart: 0,      // performance.now() timestamp when current segment started
+  segEnd: 0,        // ...and when it ends (for reps: when it's expected to end)
   pausedLeft: 0,    // ms left in segment when paused
   lastBeepSec: null,
   interval: null,
@@ -384,6 +396,7 @@ function startWorkout(w, returnTo) {
     workout: w,
     segs,
     idx: 0,
+    segStart: performance.now(),
     segEnd: performance.now() + segs[0].dur * 1000,
     lastBeepSec: null,
     returnTo,
@@ -420,10 +433,12 @@ function tick() {
   if (!timer.running || timer.paused) return;
   const now = performance.now();
 
-  // Advance through any segments that have elapsed (handles throttled tabs too)
-  while (now >= timer.segEnd) {
+  // Advance through any segments that have elapsed (handles throttled tabs too).
+  // A rep segment never elapses: it waits for the user to tap Done.
+  while (!timer.segs[timer.idx].reps && now >= timer.segEnd) {
     if (timer.idx >= timer.segs.length - 1) return finishWorkout();
     timer.idx++;
+    timer.segStart = timer.segEnd;
     timer.segEnd += timer.segs[timer.idx].dur * 1000;
     timer.lastBeepSec = null;
     goBeep();
@@ -432,7 +447,7 @@ function tick() {
   const leftMs = timer.segEnd - now;
   const secLeft = Math.ceil(leftMs / 1000);
   const seg = timer.segs[timer.idx];
-  if (secLeft >= 1 && secLeft <= 3 && secLeft < seg.dur && secLeft !== timer.lastBeepSec) {
+  if (!seg.reps && secLeft >= 1 && secLeft <= 3 && secLeft < seg.dur && secLeft !== timer.lastBeepSec) {
     timer.lastBeepSec = secLeft;
     countdownBeep();
   }
@@ -444,25 +459,42 @@ function togglePause() {
   if (!timer.running) return;
   if (timer.paused) {
     unlockAudio();
-    timer.segEnd = performance.now() + timer.pausedLeft;
+    const now = performance.now();
+    timer.segStart += now - timer.pausedAt;
+    timer.segEnd = now + timer.pausedLeft;
     timer.paused = false;
     requestWakeLock();
   } else {
-    timer.pausedLeft = timer.segEnd - performance.now();
+    timer.pausedAt = performance.now();
+    timer.pausedLeft = timer.segEnd - timer.pausedAt;
     timer.paused = true;
   }
   renderRun();
 }
 
+/** Move on to the next segment (Skip, or Done on a rep segment). */
 function skipSegment() {
   if (!timer.running) return;
+  const now = performance.now();
+  const seg = timer.segs[timer.idx];
+  // A rep segment takes as long as it takes: log the real time, not the estimate
+  if (seg.reps) seg.dur = Math.round(((timer.paused ? timer.pausedAt : now) - timer.segStart) / 1000);
   if (timer.idx >= timer.segs.length - 1) return finishWorkout();
   timer.idx++;
-  const dur = timer.segs[timer.idx].dur * 1000;
+  const next = timer.segs[timer.idx];
   timer.lastBeepSec = null;
-  if (timer.paused) timer.pausedLeft = dur;
-  else { timer.segEnd = performance.now() + dur; goBeep(); }
+  // Reps have no clock to hold, so landing on one while paused resumes
+  if (timer.paused && next.reps) { timer.paused = false; unlockAudio(); requestWakeLock(); }
+  timer.segStart = timer.pausedAt = now;
+  if (timer.paused) timer.pausedLeft = next.dur * 1000;
+  else { timer.segEnd = now + next.dur * 1000; goBeep(); }
   renderRun();
+}
+
+/** The big middle button: Done on a rep segment, Pause / Resume otherwise. */
+function mainAction() {
+  if (timer.segs[timer.idx]?.reps && !timer.paused) skipSegment();
+  else togglePause();
 }
 
 function stopTimer() {
@@ -525,20 +557,24 @@ function renderRun(leftMs) {
   run.classList.toggle('paused', timer.paused);
 
   $('run-label').textContent = timer.paused ? 'Paused' : seg.label;
-  $('run-time').textContent = fmt(Math.ceil(leftMs / 1000));
+  if (seg.reps) $('run-time').replaceChildren(String(seg.reps), el('span', 'run-unit', seg.reps === 1 ? 'rep' : 'reps'));
+  else $('run-time').textContent = fmt(Math.ceil(leftMs / 1000));
   $('run-round').style.visibility = timer.segs.workTotal < 2 ? 'hidden' : ''; // keep its space so "left" stays put
   $('run-round-num').textContent = seg.workNo;
   $('run-round-total').textContent = timer.segs.workTotal;
-  $('run-progress').style.width = `${(1 - leftMs / (seg.dur * 1000)) * 100}%`;
+  // Reps: the bar fills over the expected time, then stays full
+  $('run-progress').style.width = `${(seg.dur > 0 ? 1 - leftMs / (seg.dur * 1000) : 1) * 100}%`;
 
   const next = timer.segs[timer.idx + 1];
-  $('run-next').textContent = next ? `Next: ${next.label} ${fmt(next.dur)}` : 'Last interval!';
+  $('run-next').textContent = next ? `Next: ${next.label} ${next.reps ? repsText(next.reps) : fmt(next.dur)}` : 'Last interval!';
 
   const remainingSec = Math.ceil(leftMs / 1000) + totalOf(timer.segs.slice(timer.idx + 1));
   $('run-total').textContent = fmt(remainingSec);
   const endsAt = new Date(Date.now() + remainingSec * 1000);
   $('run-eta').textContent = `Ends at ${endsAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  $('pause').textContent = timer.paused ? 'Resume' : 'Pause';
+  const done = !!seg.reps && !timer.paused;
+  $('pause').textContent = done ? 'Done' : timer.paused ? 'Resume' : 'Pause';
+  $('pause').classList.toggle('done', done);
 }
 
 // ---------------------------------------------------------------------------
@@ -853,7 +889,7 @@ function openHome() {
 // ----- Workouts tab: grid of workouts (tap to edit) -----
 
 function createWorkout() {
-  openDraft(newWorkout(), { isNew: true });
+  openDraft(newWorkout(), { isNew: true, collapse: false }); // a brand-new workout opens ready to edit
   $('wo-name').focus();
   $('wo-name').select();
 }
@@ -1083,9 +1119,11 @@ function openEditor(id) {
 }
 
 /** isNew: not in the store yet; after: id of the workout to insert it after on save. */
-function openDraft(w, { isNew, after = null, dirty = false }) {
+function openDraft(w, { isNew, after = null, dirty = false, collapse = true }) {
   editing = w;
   draft = { isNew, after, dirty };
+  collapsed.clear();
+  if (collapse) for (const it of w.items) if (it.type === 'intervals') collapsed.add(it.id);
   renderEditor();
   show('edit');
 }
@@ -1247,8 +1285,7 @@ function renderIntervals(it, list) {
   const toggle = () => {
     setCollapsed(it.id, !collapsed.has(it.id));
     paintCollapsed();
-    paintCollapseAll();
-  };
+    };
   // The chevron folds/unfolds on tap and reorders on drag (see bindDragHandle)
   node.querySelector('.collapse-btn').addEventListener('click', toggle);
   // A collapsed block also opens when tapped anywhere on its row
@@ -1302,7 +1339,6 @@ function renderEditor() {
     container.appendChild(node);
   }
   $('items-empty').classList.toggle('hidden', w.items.length > 0);
-  paintCollapseAll();
 
   updateSummaries();
 }
@@ -1326,33 +1362,16 @@ $('wo-name').addEventListener('change', (e) => {
 
 $('edit-back').addEventListener('click', leaveEditor);
 
-// ----- Collapsing intervals (view state only: remembered per device, not part of the workout) -----
+// ----- Collapsing intervals (view state only, not part of the workout) -----
+// Opening a workout starts with every block collapsed, for an overview;
+// blocks added while editing start expanded.
 
-const UI_KEY = 'workout-timer-ui';
-const collapsed = new Set((() => {
-  try { return JSON.parse(localStorage.getItem(UI_KEY))?.collapsed || []; } catch (_) { return []; }
-})());
+const collapsed = new Set();
+try { localStorage.removeItem('workout-timer-ui'); } catch (_) { /* ignore: old remembered state */ }
 
 function setCollapsed(id, on) {
   if (on) collapsed.add(id); else collapsed.delete(id);
-  try { localStorage.setItem(UI_KEY, JSON.stringify({ collapsed: [...collapsed] })); } catch (_) { /* ignore */ }
 }
-
-function paintCollapseAll() {
-  const blocks = editing.items.filter((it) => it.type === 'intervals');
-  const btn = $('collapse-all');
-  const allCollapsed = blocks.every((it) => collapsed.has(it.id));
-  btn.classList.toggle('hidden', !blocks.length);
-  btn.classList.toggle('expand', allCollapsed);
-  btn.querySelector('.collapse-all-label').textContent = allCollapsed ? 'Expand all' : 'Collapse all';
-}
-
-$('collapse-all').addEventListener('click', () => {
-  const blocks = editing.items.filter((it) => it.type === 'intervals');
-  const collapse = !blocks.every((it) => collapsed.has(it.id));
-  for (const it of blocks) setCollapsed(it.id, collapse);
-  renderEditor();
-});
 
 /** Focus a name field with its text selected, so typing replaces the default name. */
 function focusName(input) {
@@ -1406,7 +1425,7 @@ $('start').addEventListener('click', () => startWorkout(editing, 'edit'));
 
 // ----- Running / done -----
 
-$('pause').addEventListener('click', togglePause);
+$('pause').addEventListener('click', mainAction);
 $('skip').addEventListener('click', skipSegment);
 $('stop').addEventListener('click', stopWorkout);
 $('done-back').addEventListener('click', goBack);

@@ -731,6 +731,16 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicke
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 const pad2 = (v) => String(v).padStart(2, '0');
 
+/** Seconds wheel: 0, 5, … 55. A stored value off the 5s grid opens on the nearest step below. */
+const SEC_STEP = 5;
+const secColumn = (dur, extra = {}) => ({
+  values: range(0, 60 / SEC_STEP - 1).map((i) => i * SEC_STEP),
+  index: Math.floor((dur % 60) / SEC_STEP),
+  format: pad2,
+  unit: 'sec',
+  ...extra,
+});
+
 /**
  * Bind a button to a duration (seconds) with a minutes/seconds wheel picker.
  * opts.render(value): shows the value (default: the button's text).
@@ -744,7 +754,7 @@ function bindDuration(btn, title, get, set, maxSec = 3600, { render = (v) => { b
       anchor: btn,
       columns: [
         { values: range(0, Math.floor(maxSec / 60)), index: Math.floor(v / 60), unit: 'min' },
-        { values: range(0, 59), index: v % 60, format: pad2, unit: 'sec' },
+        secColumn(v),
       ],
       onChange: ([m, s]) => {
         const next = clamp(m * 60 + s, 0, maxSec);
@@ -771,7 +781,7 @@ function bindStepAmount(btn, s) {
 
   const durColumns = (group) => [
     { values: range(0, 60), index: Math.floor(s.dur / 60), unit: 'min', group },
-    { values: range(0, 59), index: s.dur % 60, format: pad2, unit: 'sec', group },
+    secColumn(s.dur, { group }),
   ];
   const setDur = (m, sec) => { s.dur = clamp(m * 60 + sec, 0, 3600); };
   const commit = () => { render(); edited(); };

@@ -7,6 +7,7 @@
   --surface-hi: #222226;
   --line: #26262b;
   --text: #f4f4f5;
+  --soft: #b8b8be;
   --muted: #8e8e96;
   --faint: #3f3f46;
   --accent: #ff7a1a;
@@ -108,9 +109,9 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--accent);
+  color: var(--text);
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -352,36 +353,202 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .edit-header { display: flex; gap: 4px; align-items: center; margin: 0 0 2px -8px; }
 .icon-btn.back { width: 36px; height: 36px; font-size: 30px; line-height: 1; color: var(--text); }
 .wo-name { flex: 1; font-size: 28px !important; font-weight: 800; letter-spacing: -0.02em; }
-.edit-total { color: var(--muted); font-size: 15px; margin: 0 0 20px; }
-.edit-total strong { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.list-tools { display: flex; align-items: center; min-height: 36px; margin: 0 0 8px; }
+/* Its icon sits in the chevron / drag-handle column of the rows below */
+.collapse-all {
+  display: flex;
+  align-items: center;
+  gap: var(--col-gap);
+  margin-left: -10px;
+  padding: 4px 8px 4px 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+}
+.collapse-all svg { width: var(--col-handle); height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.collapse-all .ico-expand, .collapse-all.expand .ico-collapse { display: none; }
+.collapse-all.expand .ico-expand { display: block; }
 
-.group { margin-bottom: 28px; }
-.group > .row:first-child { border-top: 1px solid var(--line); }
+/* Flat list: every workout item, separated by full-width lines
+   (the list bleeds into the page's 20px side padding). */
+#edit {
+  /* Columns shared by every row, so they line up: handle · icon · name · time · delete */
+  --col-handle: 32px;
+  --col-icon: 32px;
+  --col-time: 64px;
+  --col-del: 32px;
+  --col-gap: 8px;
+}
+.items {
+  margin: 0 -20px;
+  border-top: 1px solid var(--line);
+}
+.item {
+  position: relative;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  padding: 0 10px 0 10px;
+}
+.item.flash { animation: item-flash 0.9s ease-out; }
+@keyframes item-flash { from { background-color: var(--surface-hi); } }
 
-.block-head { display: flex; gap: 4px; align-items: center; padding-bottom: 4px; }
-.block-name { flex: 1; font-size: 19px !important; font-weight: 700; }
-.block-actions { display: flex; gap: 0; }
+/* Workout total: under the list, right-aligned with the row times, smaller and muted */
+.items-total {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: var(--col-gap);
+  margin: 0 -20px 24px;
+  padding: 8px calc(10px + var(--col-del) + var(--col-gap)) 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.items-total-label { color: var(--faint); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.items-total-time { width: var(--col-time); padding: 0 8px; text-align: right; }
 
-.steps { border-bottom: 1px solid var(--line); padding: 4px 0; }
-.step { display: flex; align-items: center; gap: 10px; min-height: 44px; }
-.step-name { flex: 1; }
+/* One row: Work/Rest step, or the header of an intervals block */
+.step, .block-head { position: relative; display: flex; align-items: center; gap: var(--col-gap); min-height: 52px; }
+.item.step, .block-head { min-height: 56px; }
+.item.block { padding-bottom: 12px; }
+
+/* Column 1: drag handle (steps) or chevron (intervals: tap folds, drag reorders) */
+.step .drag-handle, .collapse-btn {
+  flex: none;
+  width: var(--col-handle);
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;   /* the finger drags the row instead of scrolling the page */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.collapse-btn { color: var(--muted); }
+.collapse-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s; }
+.block.collapsed .collapse-btn svg { transform: rotate(-90deg); }
+
+/* Column 2: icon chip. Tap a step's chip to switch work <-> rest */
 .kind {
   flex: none;
-  width: 48px;
-  padding: 4px 0;
-  border-radius: 6px;
+  width: var(--col-icon); height: 28px;
+  padding: 0;
   border: none;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
   color: var(--work);
   background: rgba(34, 197, 94, 0.14);
 }
+.kind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.kind .ico-rest, .kind.is-rest .ico-work { display: none; }
+.kind.is-rest .ico-rest { display: block; }
 .kind.is-rest { color: var(--rest); background: rgba(59, 130, 246, 0.16); }
+.kind.is-intervals { color: var(--accent); background: rgba(255, 122, 26, 0.14); }
+.kind.is-intervals svg { width: 16px; height: 16px; stroke-width: 2.4; }
 
-.add-step { display: block; padding: 10px 0; font-size: 15px; }
-.block-summary { color: var(--muted); font-size: 13px; padding-top: 8px; }
+/* Column 3: name */
+.step-name, .block-name, .rest-label { flex: 1; min-width: 0; }
+/* All names share one soft grey, so nothing contrasts too much with the background */
+.items .step-name, .items .block-name, .rest-label { color: var(--soft); } /* .items: beats the global input[type="text"] colour */
+.block-name { font-size: 17px !important; font-weight: 600; }
+.step.is-rest .step-name, .step:not(.is-rest) .rest-label { display: none; }
+
+/* Column 4: time. Step durations are tappable; a block's total is muted */
+.step .pill.dur, .head-meta {
+  flex: none;
+  width: var(--col-time);
+  margin: 0;
+  padding: 6px 8px;
+  text-align: right;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.step .pill.dur, .head-meta { color: var(--muted); font-weight: 400; }
+
+/* Column 5: delete (two taps: the icon turns into a red "Delete") */
+.icon-btn.trash { width: var(--col-del); display: grid; place-items: center; color: var(--faint); }
+.icon-btn.trash svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn.trash:not(:disabled):active { color: var(--danger); }
+.icon-btn.trash.armed {
+  width: auto;
+  padding: 0 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Inside an intervals block: chips and "+ Add step" line up with the icon column;
+   steps are indented behind a guide line under the chevron. */
+.block-stats, .block > .add-step { margin-left: calc(var(--col-handle) + var(--col-gap)); }
+.block-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: -6px; }
+.stat {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat.active { background: var(--surface-hi); }
+.stat-value { font-weight: 600; color: var(--text); }
+.stat-unit { color: var(--muted); }
+
+.steps {
+  margin: 8px 0 0 calc(var(--col-handle) / 2 - 1px);
+  padding-left: 6px;
+  border-left: 2px solid var(--line);
+}
+.steps .step + .step { border-top: 1px solid var(--line); }
+.add-step { display: block; padding: 10px 0 0; font-size: 15px; }
+
+/* Reordering. Grabbing a top-level item collapses every block to its header
+   line, and the held item lifts off the list as a slightly smaller card. */
+.items.reordering .block > :not(.block-head),
+.block.collapsed > :not(.block-head) { display: none; }
+.items.reordering .item.block, .item.block.collapsed { padding-bottom: 0; }
+.items.reordering .block-name, .block.collapsed .block-name { pointer-events: none; }
+.block.collapsed .block-head { cursor: pointer; }
+
+.item.shifting, .step.shifting { transition: transform 0.18s ease; }
+.item.dragging, .step.dragging {
+  z-index: 2;
+  background: var(--surface-hi);
+  border-radius: var(--radius);
+  border-bottom-color: transparent;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.item.dragging { scale: 0.95; transition: scale 0.15s ease; }
+.dragging > .drag-handle, .dragging .collapse-btn { color: var(--muted); cursor: grabbing; }
+
+/* "Add" palette */
+.add-title { margin-top: 4px; }
+.add-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 28px; }
+.add-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px dashed var(--faint);
+  border-radius: var(--radius);
+  background: none;
+  text-align: left;
+  transition: background-color 0.12s;
+}
+.add-card:active { background: var(--surface); }
+.add-card b { font-size: 16px; color: var(--accent); }
+.add-card.is-work b { color: var(--work); }
+.add-card.is-rest b { color: var(--rest); }
+.add-card small { font-size: 12px; color: var(--muted); }
 
 .edit-extra { display: flex; gap: 28px; justify-content: center; margin: 8px 0; }
 
@@ -391,7 +558,38 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   padding: 16px 20px calc(var(--safe-bottom) + 4px);
   background: linear-gradient(transparent, var(--bg) 35%);
 }
-.start-bar .btn { max-width: 600px; display: block; margin: 0 auto; font-size: 18px; }
+.start-bar-inner { max-width: 600px; margin: 0 auto; display: flex; gap: 10px; }
+.start-bar .btn { font-size: 18px; }
+.start-bar .btn.primary { flex: 1; }
+.btn.secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-hi);
+  color: var(--text);
+  padding: 15px 18px;
+}
+.btn.secondary svg { width: 13px; height: 13px; fill: var(--accent); }
+.btn.danger { background: var(--danger); color: #fff; }
+
+/* ---------- Confirm dialog ---------- */
+.confirm { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; }
+.confirm-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); animation: fade 0.15s; }
+.confirm-panel {
+  position: relative;
+  width: min(100%, 340px);
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 20px;
+  text-align: center;
+  animation: pop 0.15s ease-out;
+}
+@keyframes pop { from { transform: scale(0.94); opacity: 0; } }
+.confirm-title { font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
+.confirm-msg { font-size: 14px; color: var(--muted); margin-top: 6px; }
+.confirm-actions { display: flex; gap: 10px; margin-top: 20px; }
+.confirm-actions .btn { flex: 1; padding: 12px; font-size: 16px; }
+#confirm-cancel { background: var(--surface-hi); color: var(--text); }
 
 /* ---------- Wheel picker sheet ---------- */
 .sheet { position: fixed; inset: 0; z-index: 10; }

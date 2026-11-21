@@ -3,57 +3,113 @@
 // ---------------------------------------------------------------------------
 // Data model
 //
-// Workout { id, name, prep, blocks: Block[] }
-// Block   { name, rounds, rest, restAfter, steps: Step[] }
-//           rest      = rest between rounds of this block
-//           restAfter = rest before the next block
-// Step    { name, dur, kind: 'work' | 'rest' }
+// Workout   { id, name, items: Item[] }
+//           (every run starts with a fixed PREP_SEC "Get ready"; it's not part of the plan)
+// Item      = Step | Intervals
+// Step      { id, type: 'work' | 'rest', name, dur }
+// Intervals { id, type: 'intervals', name, rounds, rest, steps: Step[] }
+//             repeats its steps for N rounds; rest = rest between rounds
+//
+// Every item and step has a stable id, so per-step history (e.g. how long a
+// rep-based step usually takes) can be attached later.
 // ---------------------------------------------------------------------------
 
 const STORE_KEY = 'workout-timer-v2';
 const OLD_KEY = 'workout-timer-plan-v1';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const work = (name, dur) => ({ name, dur, kind: 'work' });
-const rest = (dur) => ({ name: 'Rest', dur, kind: 'rest' });
+const work = (name, dur) => ({ id: uid(), type: 'work', name, dur });
+const rest = (dur) => ({ id: uid(), type: 'rest', name: '', dur }); // rests have no name: they're always "Rest"
+const intervals = (name, rounds, restDur, steps) =>
+  ({ id: uid(), type: 'intervals', name, rounds, rest: restDur, steps });
+
+const isStep = (it) => it.type === 'work' || it.type === 'rest';
+
+/** Names that say nothing beyond what the background colour already shows. */
+const isGenericName = (n) => !n || /^(work|rest|block \d+|interval \d+)$/i.test(n.trim());
+
+const DEFAULT_EXERCISE = 'Push-ups';
+const PREP_SEC = 10;
 
 function seedWorkouts() {
   return [
     {
-      id: uid(), name: 'Intervals', prep: 10,
-      blocks: [
-        { name: 'Short', rounds: 5, rest: 15, restAfter: 60, steps: [work('Work', 30)] },
-        { name: 'Long', rounds: 3, rest: 30, restAfter: 0, steps: [work('Work', 120)] },
-      ],
+      id: uid(), name: 'Intervals',
+      items: [intervals('Short', 5, 15, [work('', 30)]), rest(60), intervals('Long', 3, 30, [work('', 120)])],
     },
     {
-      id: uid(), name: 'Tabata', prep: 10,
-      blocks: [{ name: 'Tabata', rounds: 8, rest: 0, restAfter: 0, steps: [work('Work', 20), rest(10)] }],
+      id: uid(), name: 'Tabata',
+      items: [intervals('Tabata', 8, 10, [work('', 20)])],
     },
     {
-      id: uid(), name: 'Circuit', prep: 10,
-      blocks: [
-        { name: 'Warm-up', rounds: 1, rest: 0, restAfter: 30, steps: [work('Jumping jacks', 120)] },
-        {
-          name: 'Circuit', rounds: 3, rest: 60, restAfter: 0,
-          steps: [work('Squats', 40), rest(20), work('Push-ups', 40), rest(20), work('Plank', 40)],
-        },
+      id: uid(), name: 'Circuit',
+      items: [
+        work('Jumping jacks', 120),
+        rest(30),
+        intervals('Circuit', 3, 60, [work('Squats', 40), rest(20), work('Push-ups', 40), rest(20), work('Plank', 40)]),
       ],
     },
   ];
 }
 
 function newWorkout() {
-  return {
-    id: uid(), name: 'New workout', prep: 10,
-    blocks: [{ name: 'Block 1', rounds: 5, rest: 15, restAfter: 0, steps: [work('Work', 30)] }],
-  };
+  return { id: uid(), name: 'New workout', items: [intervals('Interval 1', 5, 15, [work(DEFAULT_EXERCISE, 30)])] };
+}
+
+/**
+ * Convert the old "blocks" format (every block had rounds, steps, rest between
+ * rounds and rest after) into items, picking the simplest item that fits.
+ */
+function migrateBlocks(blocks) {
+  const items = [];
+  blocks.forEach((b, bi) => {
+    const steps = (b.steps || []).map((s) => (s.kind === 'rest' ? rest(s.dur) : work(s.name || '', s.dur)));
+    const rounds = b.rounds || 1;
+    const blockName = isGenericName(b.name) ? '' : b.name;
+    const nameOf = (s) => (isGenericName(s.name) ? blockName : s.name);
+    if (rounds === 1 && steps.length === 1 && steps[0].type === 'work') {
+      items.push(work(nameOf(steps[0]), steps[0].dur));
+    } else if (steps.length) {
+      items.push(intervals(blockName, rounds, b.rest || 0, steps));
+    }
+    if (bi < blocks.length - 1 && b.restAfter > 0) items.push(rest(b.restAfter));
+  });
+  return items;
+}
+
+/** "Interval N" with the first N that is not taken yet. */
+function nextIntervalName(items) {
+  const used = new Set(items.map((i) => (i.name || '').trim().toLowerCase()));
+  let n = items.filter((i) => i.type === 'intervals' && i.name.trim()).length + 1;
+  while (used.has(`interval ${n}`)) n++;
+  return `Interval ${n}`;
+}
+
+/** Upgrade items saved by the short-lived split Intervals / Circuit format. */
+function normalizeItem(it) {
+  if (it.type === 'circuit') it.type = 'intervals';
+  if (it.type === 'intervals' && !Array.isArray(it.steps)) {
+    it.steps = [work('', it.work || 30)];
+    delete it.work;
+  }
 }
 
 function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && Array.isArray(s.workouts)) return s;
+    if (s && Array.isArray(s.workouts)) {
+      for (const w of s.workouts) {
+        if (!Array.isArray(w.items)) {
+          w.items = migrateBlocks(w.blocks || []);
+          delete w.blocks;
+        }
+        w.items.forEach(normalizeItem);
+        // Unnamed intervals get a default name, like new ones do
+        w.items.filter((it) => it.type === 'intervals' && !it.name.trim())
+          .forEach((it) => { it.name = nextIntervalName(w.items); });
+      }
+      return s;
+    }
   } catch (_) { /* ignore */ }
 
   const workouts = seedWorkouts();
@@ -62,11 +118,8 @@ function loadStore() {
     const old = JSON.parse(localStorage.getItem(OLD_KEY));
     if (old && Array.isArray(old.blocks) && old.blocks.length) {
       workouts.unshift({
-        id: uid(), name: 'My workout', prep: old.prep ?? 10,
-        blocks: old.blocks.map((b) => ({
-          name: b.name || 'Block', rounds: b.rounds || 1, rest: b.rest || 0, restAfter: b.restAfter || 0,
-          steps: [work('Work', b.work || 30)],
-        })),
+        id: uid(), name: 'My workout',
+        items: old.blocks.map((b) => intervals(b.name || '', b.rounds || 1, b.rest || 0, [work('', b.work || 30)])),
       });
     }
   } catch (_) { /* ignore */ }
@@ -108,56 +161,74 @@ function fmt(totalSec) {
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 const clone = (tplId) => $(tplId).content.firstElementChild.cloneNode(true);
 
-/** Names that say nothing beyond what the background colour already shows. */
-const isGenericName = (n) => !n || /^(work|rest|block \d+)$/i.test(n.trim());
+/** First meaningful name, else the plain kind ("Work" / "Rest"). */
+function labelOf(kind, ...names) {
+  for (const n of names) if (!isGenericName(n)) return n.trim();
+  return kind === 'rest' ? 'Rest' : 'Work';
+}
 
-/**
- * What to show while a step runs: its own name, else (for work) its block's
- * name, else plain "Work" / "Rest".
- */
-function stepLabel(step, block) {
-  if (!isGenericName(step.name)) return step.name.trim();
-  if (step.kind === 'work' && !isGenericName(block.name)) return block.name.trim();
-  return step.kind === 'rest' ? 'Rest' : 'Work';
+function stepSegs(s, parentName) {
+  if (!(s.dur > 0)) return [];
+  return [{ type: s.type, label: s.type === 'rest' ? 'Rest' : labelOf('work', s.name, parentName), dur: s.dur }];
+}
+
+/** Flatten one item into timed segments. */
+function itemSegs(it) {
+  if (isStep(it)) return stepSegs(it);
+  const segs = [];
+  const round = it.steps.flatMap((s) => stepSegs(s, it.name));
+  if (!round.length) return segs;
+  for (let r = 1; r <= it.rounds; r++) {
+    segs.push(...round.map((s) => ({ ...s })));
+    if (r < it.rounds && it.rest > 0) segs.push({ type: 'rest', label: 'Rest', dur: it.rest });
+  }
+  return segs;
 }
 
 /** Flatten a workout into a linear list of timed segments. */
 function buildSegments(w) {
   const segs = [];
-  if (w.prep > 0) segs.push({ type: 'prep', label: 'Get ready', dur: w.prep });
-  w.blocks.forEach((b, bi) => {
-    const steps = b.steps.filter((s) => s.dur > 0);
-    if (!steps.length) return;
-    for (let r = 1; r <= b.rounds; r++) {
-      const info = { block: b.name, round: r, rounds: b.rounds };
-      for (const s of steps) {
-        segs.push({ type: s.kind, label: stepLabel(s, b), dur: s.dur, ...info });
-      }
-      if (r < b.rounds && b.rest > 0) segs.push({ type: 'rest', label: 'Rest', dur: b.rest, ...info });
+  segs.push({ type: 'prep', label: 'Get ready', dur: PREP_SEC });
+  for (const it of w.items) {
+    for (const s of itemSegs(it)) {
+      const prev = segs[segs.length - 1];
+      // Back-to-back rests (e.g. intervals ending in rest, then a Rest item) become one
+      if (s.type === 'rest' && prev?.type === 'rest') {
+        prev.dur += s.dur;
+        if (prev.label === 'Rest') prev.label = s.label;
+      } else segs.push(s);
     }
-    if (bi < w.blocks.length - 1 && b.restAfter > 0) {
-      segs.push({ type: 'rest', label: 'Rest', dur: b.restAfter, block: b.name });
-    }
-  });
+  }
   // A rest at the very end is pointless
   while (segs.length && segs[segs.length - 1].type === 'rest') segs.pop();
   return segs;
 }
 
 const totalOf = (segs) => segs.reduce((a, s) => a + s.dur, 0);
+/** Length of the plan itself, without the fixed "Get ready". */
+const planDuration = (w) => totalOf(buildSegments(w).filter((s) => s.type !== 'prep'));
 const hasWork = (segs) => segs.some((s) => s.type === 'work');
+const itemDuration = (it) => totalOf(itemSegs(it));
 
-function blockDuration(b) {
-  const perRound = b.steps.reduce((a, s) => a + s.dur, 0);
-  return b.rounds * perRound + Math.max(0, b.rounds - 1) * b.rest;
-}
-
+/** Short summary for cards, e.g. "Jumping jacks · 5×0:30 · 3× Circuit". */
 function describeWorkout(w) {
-  return w.blocks.map((b) => {
-    const steps = b.steps.filter((s) => s.kind === 'work');
-    if (steps.length === 1) return `${b.rounds}×${fmt(steps[0].dur)}`;
-    return `${b.rounds}× ${b.name || 'circuit'}`;
-  }).join(' · ');
+  const tokens = [];
+  for (const it of w.items) {
+    if (it.type === 'work') tokens.push(isGenericName(it.name) ? fmt(it.dur) : it.name.trim());
+    else if (it.type === 'intervals') {
+      const works = it.steps.filter((s) => s.type === 'work');
+      tokens.push(works.length === 1 ? `${it.rounds}×${fmt(works[0].dur)}` : `${it.rounds}× ${it.name.trim() || 'intervals'}`);
+    }
+  }
+  // Collapse runs of identical single steps: 0:30 · 0:30 · 0:30 → 3×0:30
+  const out = [];
+  for (let i = 0; i < tokens.length;) {
+    let j = i;
+    while (j < tokens.length && tokens[j] === tokens[i]) j++;
+    out.push(j - i > 1 && !tokens[i].includes('×') ? `${j - i}×${tokens[i]}` : tokens[i]);
+    i = j;
+  }
+  return out.join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +510,7 @@ function finishWorkout() {
 }
 
 function goBack() {
-  if (timer.returnTo === 'edit' && findWorkout(timer.workout.id)) openEditor(timer.workout.id);
+  if (timer.returnTo === 'edit' && editing) { renderEditor(); show('edit'); } // back to the (maybe unsaved) draft
   else openHome();
 }
 
@@ -579,9 +650,12 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicke
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 const pad2 = (v) => String(v).padStart(2, '0');
 
-/** Bind a pill button to a duration (seconds) with a minutes/seconds wheel picker. */
-function bindDuration(btn, title, get, set, maxSec = 3600) {
-  btn.textContent = fmt(get());
+/**
+ * Bind a button to a duration (seconds) with a minutes/seconds wheel picker.
+ * opts.render(value): shows the value (default: the button's text).
+ */
+function bindDuration(btn, title, get, set, maxSec = 3600, { render = (v) => { btn.textContent = fmt(v); } } = {}) {
+  render(get());
   btn.addEventListener('click', () => {
     const v = get();
     openPicker({
@@ -594,16 +668,16 @@ function bindDuration(btn, title, get, set, maxSec = 3600) {
       onChange: ([m, s]) => {
         const next = clamp(m * 60 + s, 0, maxSec);
         set(next);
-        btn.textContent = fmt(next);
+        render(next);
         edited();
       },
     });
   });
 }
 
-/** Bind a pill button to an integer count with a single wheel. */
-function bindCount(btn, title, get, set, min = 1, max = 99) {
-  btn.textContent = get();
+/** Bind a button to an integer count with a single wheel (opts as in bindDuration). */
+function bindCount(btn, title, get, set, min = 1, max = 99, { render = (n) => { btn.textContent = n; } } = {}) {
+  render(get());
   btn.addEventListener('click', () => {
     openPicker({
       title,
@@ -611,7 +685,7 @@ function bindCount(btn, title, get, set, min = 1, max = 99) {
       columns: [{ values: range(min, max), index: get() - min, unit: '' }],
       onChange: ([n]) => {
         set(n);
-        btn.textContent = n;
+        render(n);
         edited();
       },
     });
@@ -651,7 +725,7 @@ document.querySelectorAll('#tabbar [data-tab]').forEach((b) => {
 /** Fill a workout card (shared by the home row and the workouts grid). */
 function fillCard(card, w) {
   card.querySelector('.wo-title').textContent = w.name || 'Untitled';
-  card.querySelector('.wo-total').textContent = fmt(totalOf(buildSegments(w)));
+  card.querySelector('.wo-total').textContent = fmt(planDuration(w));
   card.querySelector('.wo-meta').textContent = describeWorkout(w);
   return card;
 }
@@ -779,10 +853,7 @@ function openHome() {
 // ----- Workouts tab: grid of workouts (tap to edit) -----
 
 function createWorkout() {
-  const w = newWorkout();
-  store.workouts.push(w);
-  save();
-  openEditor(w.id);
+  openDraft(newWorkout(), { isNew: true });
   $('wo-name').focus();
   $('wo-name').select();
 }
@@ -799,15 +870,15 @@ function openWorkouts() {
     row.type = 'button';
     const text = el('span', 'list-text');
     text.append(el('span', 'list-title', w.name || 'Untitled'), el('span', 'list-sub', describeWorkout(w)));
-    row.append(text, el('span', 'list-value', fmt(totalOf(buildSegments(w)))));
+    row.append(text, el('span', 'list-value', fmt(planDuration(w))));
     row.setAttribute('aria-label', `Edit ${w.name || 'workout'}`);
     row.addEventListener('click', () => openEditor(w.id));
 
     const handle = el('button', 'drag-handle');
     handle.type = 'button';
     handle.setAttribute('aria-label', `Reorder ${w.name || 'workout'} (drag, or use arrow keys)`);
-    handle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
-    bindDragHandle(handle, item);
+    handle.innerHTML = HANDLE_SVG;
+    bindDragHandle(handle, item, (from, to) => { moveItem(store.workouts, from, to); save(); });
 
     item.append(row, handle);
     list.appendChild(item);
@@ -825,62 +896,102 @@ function openWorkouts() {
 
 $('add-workout').addEventListener('click', createWorkout);
 
-/** Persist the workout order from the current DOM order of the list. */
-function saveListOrder() {
-  const ids = [...$('workout-list').querySelectorAll('.list-item')].map((n) => n.dataset.id);
-  store.workouts.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-  save();
-}
+/** Move one array element from index `from` to index `to`. */
+const moveItem = (arr, from, to) => arr.splice(to, 0, arr.splice(from, 1)[0]);
+
+const HANDLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
 
 /**
- * Drag a row by its handle: the row follows the finger and the others slide
- * out of the way. On release the DOM is reordered and the new order saved.
+ * Drag a row by its handle: the row follows the finger and its siblings slide
+ * out of the way. On release the DOM is reordered and onMove(from, to) called.
+ * Rows may differ in height and be separated by a gap.
+ *
+ * The drag only starts once the finger has moved a few pixels, so the handle
+ * can also be a normal button (a tap still fires "click"; after a drag the
+ * click is swallowed).
+ * collapse: while dragging, add .reordering to the list so items shrink to
+ * one line (CSS); the page scrolls so the handle stays under the finger.
  */
-function bindDragHandle(handle, item) {
+const DRAG_THRESHOLD = 6;
+
+function bindDragHandle(handle, item, onMove, { collapse = false } = {}) {
   handle.addEventListener('keydown', (e) => {
     const sib = e.key === 'ArrowUp' ? item.previousElementSibling : e.key === 'ArrowDown' ? item.nextElementSibling : null;
     if (!sib) return;
     e.preventDefault();
+    const from = [...item.parentElement.children].indexOf(item);
     if (e.key === 'ArrowUp') sib.before(item); else sib.after(item);
-    saveListOrder();
     handle.focus();
+    onMove(from, from + (e.key === 'ArrowUp' ? -1 : 1));
   });
+
+  // Swallow the click that follows a drag, so a dragged chevron doesn't also toggle
+  let draggedAt = 0;
+  handle.addEventListener('click', (e) => {
+    if (performance.now() - draggedAt < 400) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
 
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    e.preventDefault();
+    e.preventDefault(); // no text selection while dragging (a tap still fires "click")
+    e.stopPropagation(); // a step's handle inside intervals shouldn't drag the whole block
     handle.setPointerCapture(e.pointerId);
-
-    const items = [...item.parentElement.querySelectorAll('.list-item')];
-    const from = items.indexOf(item);
-    const rects = items.map((n) => n.getBoundingClientRect());
-    const h = rects[from].height;
     const startY = e.clientY;
-    let to = from;
-    item.classList.add('dragging');
-    items.forEach((n) => { if (n !== item) n.classList.add('shifting'); });
+    const list = item.parentElement;
+    let started = false;
+    let items, from, rects, gap, h, to, offset = 0;
+
+    const begin = () => {
+      started = true;
+      if (collapse) {
+        const before = handle.getBoundingClientRect().top;
+        list.classList.add('reordering');
+        window.scrollBy(0, handle.getBoundingClientRect().top - before);
+        offset = before - handle.getBoundingClientRect().top; // what scrolling couldn't undo
+      }
+      items = [...list.children];
+      from = to = items.indexOf(item);
+      rects = items.map((n) => n.getBoundingClientRect());
+      gap = items.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0;
+      h = rects[from].height + gap; // how far the others move to make room
+      item.classList.add('dragging');
+      items.forEach((n) => { if (n !== item) n.classList.add('shifting'); });
+    };
 
     const move = (ev) => {
-      const dy = Math.max(rects[0].top - rects[from].top, Math.min(rects[items.length - 1].top - rects[from].top, ev.clientY - startY));
+      if (!started) {
+        if (Math.abs(ev.clientY - startY) < DRAG_THRESHOLD) return;
+        begin();
+      }
+      const last = items.length - 1;
+      const dy = Math.max(rects[0].top - rects[from].top,
+        Math.min(rects[last].bottom - rects[from].bottom, ev.clientY - startY + offset));
       item.style.transform = `translateY(${dy}px)`;
-      const center = rects[from].top + h / 2 + dy;
-      to = rects.findIndex((r) => center < r.bottom);
-      if (to === -1) to = items.length - 1;
+      const center = rects[from].top + rects[from].height / 2 + dy;
+      to = rects.findIndex((r) => center < r.bottom + gap / 2);
+      if (to === -1) to = last;
       items.forEach((n, i) => {
         if (n === item) return;
         const shift = from < to && i > from && i <= to ? -h : to < from && i >= to && i < from ? h : 0;
         n.style.transform = shift ? `translateY(${shift}px)` : '';
       });
     };
+
     const end = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
+      if (!started) return; // a tap: let the click through
+      draggedAt = performance.now();
       items.forEach((n) => { n.classList.remove('dragging', 'shifting'); n.style.transform = ''; });
-      if (to !== from) {
-        if (to > from) items[to].after(item); else items[to].before(item);
-        saveListOrder();
+      if (to !== from) { if (to > from) items[to].after(item); else items[to].before(item); }
+      if (collapse) {
+        // Expand again, keeping the dropped item where the finger left it
+        const before = handle.getBoundingClientRect().top;
+        list.classList.remove('reordering');
+        window.scrollBy(0, handle.getBoundingClientRect().top - before);
       }
+      if (to !== from) onMove(from, to);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
@@ -961,24 +1072,56 @@ function openLog(focusDay) {
 
 // ----- Editor -----
 
+// The editor works on a copy of the workout ("draft"); nothing is stored until Save.
 let editing = null;
+let draft = { isNew: false, after: null, dirty: false };
 
 function openEditor(id) {
-  editing = findWorkout(id);
-  if (!editing) return openWorkouts();
-  resetDeleteButton();
+  const w = findWorkout(id);
+  if (!w) return openWorkouts();
+  openDraft(structuredClone(w), { isNew: false });
+}
+
+/** isNew: not in the store yet; after: id of the workout to insert it after on save. */
+function openDraft(w, { isNew, after = null, dirty = false }) {
+  editing = w;
+  draft = { isNew, after, dirty };
   renderEditor();
   show('edit');
 }
 
+function markDirty() { draft.dirty = true; }
+
 function edited() {
-  save();
+  markDirty();
   if (editing) updateSummaries();
 }
 
 function structureChanged() {
-  save();
+  markDirty();
   renderEditor();
+}
+
+function saveDraft() {
+  const i = store.workouts.findIndex((w) => w.id === editing.id);
+  if (i !== -1) store.workouts[i] = editing;
+  else {
+    const after = store.workouts.findIndex((w) => w.id === draft.after);
+    store.workouts.splice(after === -1 ? store.workouts.length : after + 1, 0, editing);
+  }
+  save();
+  editing = structuredClone(editing); // keep the stored copy safe from further edits
+  draft = { isNew: false, after: null, dirty: false };
+}
+
+/** Leave the editor, asking first if there are unsaved changes. */
+function leaveEditor() {
+  if (!draft.dirty && !draft.isNew) return openWorkouts();
+  askConfirm({
+    title: draft.isNew ? 'Discard this new workout?' : 'Discard unsaved changes?',
+    message: 'Your changes will be lost.',
+    ok: 'Discard',
+  }, openWorkouts);
 }
 
 /** Replace a pill element with a fresh clone so old listeners are dropped. */
@@ -988,151 +1131,277 @@ function freshPill(node) {
   return fresh;
 }
 
+// ----- Confirm dialog (no browser dialogs: they block the page on iOS) -----
+
+let confirmAction = null;
+
+function askConfirm({ title, message = '', ok = 'Delete' }, onOk) {
+  $('confirm-title').textContent = title;
+  $('confirm-msg').textContent = message;
+  $('confirm-msg').classList.toggle('hidden', !message);
+  $('confirm-ok').textContent = ok;
+  confirmAction = onOk;
+  $('confirm').classList.remove('hidden');
+  $('confirm').setAttribute('aria-hidden', 'false');
+  $('confirm-cancel').focus();
+}
+
+function closeConfirm() {
+  confirmAction = null;
+  $('confirm').classList.add('hidden');
+  $('confirm').setAttribute('aria-hidden', 'true');
+}
+
+$('confirm-ok').addEventListener('click', () => { const fn = confirmAction; closeConfirm(); fn?.(); });
+$('confirm-cancel').addEventListener('click', closeConfirm);
+document.querySelector('.confirm-backdrop').addEventListener('click', closeConfirm);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && confirmAction) closeConfirm(); });
+
+
+/**
+ * Two-tap confirm: the first tap turns the button into a red "Delete", the
+ * second one runs onConfirm. Tapping anywhere else, or waiting 3s, undoes it.
+ */
+function armToConfirm(btn, onConfirm, label = 'Delete') {
+  const original = btn.innerHTML;
+  let timer = null;
+  const outside = (e) => { if (!btn.contains(e.target)) disarm(); };
+  function disarm() {
+    clearTimeout(timer);
+    timer = null;
+    btn.classList.remove('armed');
+    btn.innerHTML = original;
+    document.removeEventListener('pointerdown', outside, true);
+  }
+  btn.addEventListener('click', () => {
+    if (!timer) {
+      btn.classList.add('armed');
+      btn.textContent = label;
+      timer = setTimeout(disarm, 3000);
+      document.addEventListener('pointerdown', outside, true);
+      return;
+    }
+    disarm();
+    onConfirm();
+  });
+}
+
+/** Trash button that removes `obj` from `list` (two taps). */
+function bindDelete(btn, list, obj) {
+  armToConfirm(btn, () => {
+    const i = list.indexOf(obj);
+    if (i !== -1) { list.splice(i, 1); structureChanged(); }
+  });
+}
+
+/** A Work/Rest row: used both as a top-level item and inside intervals. */
+function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
+  const row = clone('step-tpl');
+  const stepName = row.querySelector('.step-name');
+  const kind = row.querySelector('.kind');
+  const paintKind = () => {
+    kind.classList.toggle('is-rest', s.type === 'rest');
+    kind.setAttribute('aria-label', s.type === 'rest' ? 'Rest (tap to make it work)' : 'Work (tap to make it rest)');
+    row.classList.toggle('is-rest', s.type === 'rest');
+    stepName.placeholder = isGenericName(parentName) ? 'Exercise' : parentName.trim();
+  };
+  paintKind();
+  kind.addEventListener('click', () => {
+    s.type = s.type === 'rest' ? 'work' : 'rest';
+    // The name is kept while it's a rest, so switching back restores it
+    paintKind();
+    edited();
+  });
+
+  stepName.value = s.name;
+  stepName.addEventListener('input', () => { s.name = stepName.value; markDirty(); });
+
+  bindDuration(row.querySelector('.dur'), s.type === 'rest' ? 'Rest' : labelOf('work', s.name), () => s.dur, (v) => { s.dur = v; });
+
+  const del = row.querySelector('[data-act="delete"]');
+  del.disabled = list.length <= minCount;
+  bindDelete(del, list, s);
+  bindDragHandle(row.querySelector('.drag-handle'), row, (from, to) => { moveItem(list, from, to); structureChanged(); },
+    { collapse: list === editing.items });
+  return row;
+}
+
+/** "<b>5</b> rounds": a value followed by a muted word. */
+function renderStat(btn, value, unit) {
+  btn.querySelector('.stat-value').textContent = value;
+  btn.querySelector('.stat-unit').textContent = unit;
+}
+
+function renderIntervals(it, list) {
+  const node = clone('intervals-tpl');
+
+  const name = node.querySelector('.block-name');
+  name.value = it.name;
+
+  const paintCollapsed = () => {
+    const on = collapsed.has(it.id);
+    node.classList.toggle('collapsed', on);
+    node.querySelector('.collapse-btn').setAttribute('aria-expanded', String(!on));
+  };
+  paintCollapsed();
+  const toggle = () => {
+    setCollapsed(it.id, !collapsed.has(it.id));
+    paintCollapsed();
+    paintCollapseAll();
+  };
+  // The chevron folds/unfolds on tap and reorders on drag (see bindDragHandle)
+  node.querySelector('.collapse-btn').addEventListener('click', toggle);
+  // A collapsed block also opens when tapped anywhere on its row
+  node.querySelector('.block-head').addEventListener('click', (e) => {
+    if (collapsed.has(it.id) && !e.target.closest('.collapse-btn, .trash')) toggle();
+  });
+  name.addEventListener('input', () => { it.name = name.value; markDirty(); });
+
+  // "5 rounds · 0:30 rest between": two tappable values with small labels
+  const roundsBtn = node.querySelector('.stat-rounds');
+  const restBtn = node.querySelector('.stat-rest');
+  restBtn.classList.toggle('hidden', it.rounds < 2); // no rounds to rest between
+  bindCount(roundsBtn, 'Rounds', () => it.rounds, (n) => {
+    it.rounds = n;
+    restBtn.classList.toggle('hidden', n < 2);
+  }, 1, 99, { render: (n) => renderStat(roundsBtn, n, n === 1 ? 'round' : 'rounds') });
+  bindDuration(restBtn, 'Rest between rounds', () => it.rest, (v) => { it.rest = v; }, 3600,
+    { render: (v) => renderStat(restBtn, v ? fmt(v) : 'No', 'rest') });
+
+  const stepsEl = node.querySelector('.steps');
+  for (const s of it.steps) stepsEl.appendChild(renderStep(s, it.steps, { minCount: 1, parentName: it.name }));
+
+  node.querySelector('.add-step').addEventListener('click', () => {
+    const lastStep = it.steps[it.steps.length - 1];
+    const step = lastStep?.type === 'work' ? rest(15) : work(DEFAULT_EXERCISE, 30);
+    it.steps.push(step);
+    structureChanged();
+    if (step.type === 'work') {
+      const names = $('items').querySelector(`[data-id="${it.id}"]`).querySelectorAll('.step-name');
+      focusName(names[names.length - 1]);
+    }
+  });
+
+  bindDelete(node.querySelector('.block-head [data-act="delete"]'), list, it);
+  bindDragHandle(node.querySelector('.collapse-btn'), node,
+    (from, to) => { moveItem(list, from, to); structureChanged(); }, { collapse: true });
+  return node;
+}
+
 function renderEditor() {
   const w = editing;
   $('wo-name').value = w.name;
-  bindDuration(freshPill($('prep')), 'Get ready', () => w.prep, (v) => { w.prep = v; }, 600);
 
-  const container = $('blocks');
+  const container = $('items');
   container.replaceChildren();
 
-  w.blocks.forEach((b, i) => {
-    const node = clone('block-tpl');
-    const isLast = i === w.blocks.length - 1;
-    const label = b.name || `Block ${i + 1}`;
-
-    const name = node.querySelector('.block-name');
-    name.value = b.name;
-    name.addEventListener('input', () => { b.name = name.value; save(); });
-
-    const restRow = node.querySelector('.rest-row');
-    restRow.classList.toggle('hidden', b.rounds < 2);
-    bindCount(node.querySelector('.pill-rounds'), `${label}: rounds`, () => b.rounds, (n) => {
-      b.rounds = n;
-      restRow.classList.toggle('hidden', n < 2);
-    });
-
-    // Steps
-    const stepsEl = node.querySelector('.steps');
-    b.steps.forEach((s, si) => {
-      const row = clone('step-tpl');
-      const stepName = row.querySelector('.step-name');
-      const kind = row.querySelector('.kind');
-      const paintKind = () => {
-        kind.textContent = s.kind === 'rest' ? 'Rest' : 'Work';
-        kind.classList.toggle('is-rest', s.kind === 'rest');
-      };
-      paintKind();
-      kind.addEventListener('click', () => {
-        s.kind = s.kind === 'rest' ? 'work' : 'rest';
-        if (s.name === 'Work' && s.kind === 'rest') s.name = 'Rest';
-        else if (s.name === 'Rest' && s.kind === 'work') s.name = 'Work';
-        stepName.value = s.name;
-        paintKind();
-        edited();
-      });
-
-      stepName.value = s.name;
-      stepName.addEventListener('input', () => { s.name = stepName.value; save(); });
-
-      bindDuration(row.querySelector('.dur'), s.name || (s.kind === 'rest' ? 'Rest' : 'Work'),
-        () => s.dur, (v) => { s.dur = v; });
-
-      const remove = row.querySelector('[data-act="remove-step"]');
-      remove.disabled = b.steps.length === 1;
-      remove.addEventListener('click', () => {
-        if (b.steps.length > 1) { b.steps.splice(si, 1); structureChanged(); }
-      });
-      stepsEl.appendChild(row);
-    });
-
-    node.querySelector('.add-step').addEventListener('click', () => {
-      const lastStep = b.steps[b.steps.length - 1];
-      const step = lastStep.kind === 'work' ? rest(15) : work('', 30);
-      b.steps.push(step);
-      structureChanged();
-      if (step.kind === 'work') {
-        const names = $('blocks').children[i].querySelectorAll('.step-name');
-        names[names.length - 1].focus();
-      }
-    });
-
-    bindDuration(node.querySelector('.pill-rest'), 'Rest between rounds', () => b.rest, (v) => { b.rest = v; });
-    bindDuration(node.querySelector('.pill-rest-after'), 'Rest after block', () => b.restAfter, (v) => { b.restAfter = v; });
-    node.querySelector('.rest-after-row').classList.toggle('hidden', isLast);
-
-    node.querySelector('[data-act="up"]').disabled = i === 0;
-    node.querySelector('[data-act="down"]').disabled = isLast;
-    node.querySelector('[data-act="remove"]').disabled = w.blocks.length === 1;
-    node.querySelector('.block-actions').addEventListener('click', (e) => {
-      const act = e.target.closest('button')?.dataset.act;
-      const bl = w.blocks;
-      if (act === 'up' && i > 0) [bl[i - 1], bl[i]] = [bl[i], bl[i - 1]];
-      else if (act === 'down' && !isLast) [bl[i + 1], bl[i]] = [bl[i], bl[i + 1]];
-      else if (act === 'remove' && bl.length > 1) bl.splice(i, 1);
-      else return;
-      structureChanged();
-    });
-
+  for (const it of w.items) {
+    const node = isStep(it) ? renderStep(it, w.items) : renderIntervals(it, w.items);
+    node.classList.add('item');
+    node.dataset.id = it.id;
     container.appendChild(node);
-  });
+  }
+  $('items-empty').classList.toggle('hidden', w.items.length > 0);
+  paintCollapseAll();
 
   updateSummaries();
 }
 
 function updateSummaries() {
   const w = editing;
-  document.querySelectorAll('#blocks .block').forEach((node, i) => {
-    const b = w.blocks[i];
-    node.querySelector('.block-summary').textContent =
-      `${b.rounds} round${b.rounds === 1 ? '' : 's'} · ${fmt(blockDuration(b))}`;
-  });
+  for (const it of w.items) {
+    if (isStep(it)) continue;
+    const node = $('items').querySelector(`[data-id="${it.id}"]`);
+    node.querySelector('.head-meta').textContent = fmt(itemDuration(it));
+  }
   const segs = buildSegments(w);
-  $('total-time').textContent = fmt(totalOf(segs));
+  $('total-time').textContent = fmt(planDuration(w));
   $('start').disabled = !hasWork(segs);
 }
 
-$('wo-name').addEventListener('input', (e) => { editing.name = e.target.value; save(); });
+$('wo-name').addEventListener('input', (e) => { editing.name = e.target.value; markDirty(); });
 $('wo-name').addEventListener('change', (e) => {
-  if (!editing.name.trim()) { editing.name = 'Untitled'; e.target.value = editing.name; save(); }
+  if (!editing.name.trim()) { editing.name = 'Untitled'; e.target.value = editing.name; }
 });
 
-$('edit-back').addEventListener('click', openWorkouts);
+$('edit-back').addEventListener('click', leaveEditor);
 
-$('add-block').addEventListener('click', () => {
-  const blocks = editing.blocks;
-  const last = blocks[blocks.length - 1];
-  if (!last.restAfter) last.restAfter = 60;
-  blocks.push({ ...structuredClone(last), name: `Block ${blocks.length + 1}`, restAfter: 0 });
-  structureChanged();
-});
+// ----- Collapsing intervals (view state only: remembered per device, not part of the workout) -----
 
-$('duplicate').addEventListener('click', () => {
-  const copy = { ...structuredClone(editing), id: uid(), name: `${editing.name} (copy)` };
-  store.workouts.splice(store.workouts.indexOf(editing) + 1, 0, copy);
-  save();
-  openEditor(copy.id);
-});
+const UI_KEY = 'workout-timer-ui';
+const collapsed = new Set((() => {
+  try { return JSON.parse(localStorage.getItem(UI_KEY))?.collapsed || []; } catch (_) { return []; }
+})());
 
-// Delete needs a second tap within 3 seconds (no browser dialogs)
-let deleteArmed = null;
-function resetDeleteButton() {
-  clearTimeout(deleteArmed);
-  deleteArmed = null;
-  $('delete').textContent = 'Delete';
+function setCollapsed(id, on) {
+  if (on) collapsed.add(id); else collapsed.delete(id);
+  try { localStorage.setItem(UI_KEY, JSON.stringify({ collapsed: [...collapsed] })); } catch (_) { /* ignore */ }
 }
-$('delete').addEventListener('click', () => {
-  if (!deleteArmed) {
-    $('delete').textContent = 'Tap again to delete';
-    deleteArmed = setTimeout(resetDeleteButton, 3000);
-    return;
+
+function paintCollapseAll() {
+  const blocks = editing.items.filter((it) => it.type === 'intervals');
+  const btn = $('collapse-all');
+  const allCollapsed = blocks.every((it) => collapsed.has(it.id));
+  btn.classList.toggle('hidden', !blocks.length);
+  btn.classList.toggle('expand', allCollapsed);
+  btn.querySelector('.collapse-all-label').textContent = allCollapsed ? 'Expand all' : 'Collapse all';
+}
+
+$('collapse-all').addEventListener('click', () => {
+  const blocks = editing.items.filter((it) => it.type === 'intervals');
+  const collapse = !blocks.every((it) => collapsed.has(it.id));
+  for (const it of blocks) setCollapsed(it.id, collapse);
+  renderEditor();
+});
+
+/** Focus a name field with its text selected, so typing replaces the default name. */
+function focusName(input) {
+  input.focus({ preventScroll: true });
+  input.select();
+}
+
+const NEW_ITEM = {
+  work: () => work(DEFAULT_EXERCISE, 30),
+  rest: () => rest(30),
+  intervals: () => intervals(nextIntervalName(editing.items), 5, 15, [work(DEFAULT_EXERCISE, 30)]),
+};
+
+document.querySelectorAll('[data-add]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const it = NEW_ITEM[btn.dataset.add]();
+    editing.items.push(it);
+    structureChanged();
+    const node = $('items').lastElementChild;
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 900);
+    if (it.type === 'work') focusName(node.querySelector('.step-name'));
+  });
+});
+
+/** Fresh ids for a copied workout, so the copy's history stays its own. */
+function reId(w) {
+  w.id = uid();
+  for (const it of w.items) {
+    it.id = uid();
+    if (it.steps) for (const s of it.steps) s.id = uid();
   }
-  resetDeleteButton();
-  store.workouts = store.workouts.filter((w) => w !== editing);
+  return w;
+}
+
+// Duplicate: the copy (including any unsaved edits) opens as a new draft; the original stays as saved.
+$('duplicate').addEventListener('click', () => {
+  const copy = reId({ ...structuredClone(editing), name: `${editing.name} (copy)` });
+  openDraft(copy, { isNew: true, after: editing.id, dirty: true });
+});
+
+armToConfirm($('delete'), () => {
+  store.workouts = store.workouts.filter((w) => w.id !== editing.id);
   save();
   openWorkouts();
-});
+}, 'Tap again to delete');
 
+$('save').addEventListener('click', () => { saveDraft(); openWorkouts(); });
 $('start').addEventListener('click', () => startWorkout(editing, 'edit'));
 
 // ----- Running / done -----

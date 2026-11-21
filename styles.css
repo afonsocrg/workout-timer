@@ -349,18 +349,6 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .log-time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; font-size: 14px; min-width: 44px; }
 .log-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-dur { color: var(--muted); font-variant-numeric: tabular-nums; }
-.log-del {
-  flex: none;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 6px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--faint);
-  font-size: 13px;
-}
-.log-del.armed { background: var(--danger); color: #fff; font-weight: 700; padding: 0 10px; }
 
 /* ---------- Editor ---------- */
 #edit { padding-bottom: calc(env(safe-area-inset-bottom) + 32px); }

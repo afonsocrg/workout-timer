@@ -1245,24 +1245,17 @@ function openLog(focusDay) {
         el('span', 'log-name', e.name),
         el('span', 'log-dur', fmt(e.dur)),
       );
-      const del = el('button', 'log-del', '✕');
+      const del = el('button', 'icon-btn trash');
       del.type = 'button';
       del.setAttribute('aria-label', 'Remove from history');
-      let armed = null;
-      del.addEventListener('click', () => {
-        if (!armed) {
-          del.textContent = 'Remove?';
-          del.classList.add('armed');
-          armed = setTimeout(() => { armed = null; del.textContent = '✕'; del.classList.remove('armed'); }, 3000);
-          return;
-        }
-        clearTimeout(armed);
+      del.innerHTML = TRASH_SVG;
+      armToConfirm(del, () => {
         store.log = store.log.filter((x) => x.id !== e.id);
         save();
         const y0 = window.scrollY;
         openLog();
         window.scrollTo(0, y0);
-      });
+      }, 'Remove?');
       row.appendChild(del);
       group.appendChild(row);
     }

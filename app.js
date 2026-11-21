@@ -929,7 +929,7 @@ function bindCount(btn, title, get, set, min = 1, max = 99, { render = (n) => { 
 // Views & tab bar
 // ---------------------------------------------------------------------------
 
-const VIEWS = ['home', 'workouts', 'log', 'edit', 'run', 'done'];
+const VIEWS = ['home', 'workouts', 'log', 'edit', 'preview', 'run', 'done'];
 const TAB_VIEWS = ['home', 'workouts', 'log'];
 
 function show(view) {
@@ -1123,6 +1123,7 @@ function openWorkouts() {
     more.setAttribute('aria-haspopup', 'menu');
     more.innerHTML = MORE_SVG;
     more.addEventListener('click', () => (menuOpenFor === more ? closeMenu() : openMenu(more, [
+      { label: 'Preview', action: () => openPreview(w) },
       { label: 'Duplicate', action: () => duplicateWorkout(w) },
       { label: 'Export', action: () => exportWorkout(w) },
     ])));
@@ -1166,6 +1167,58 @@ function duplicateWorkout(w) {
   row?.classList.add('flash');
   setTimeout(() => row?.classList.remove('flash'), 900);
 }
+
+// ----- Preview: the workout rolled out as the run will go -----
+
+let previewing = null;
+
+/**
+ * List every segment the run will go through (without "Get ready"), with the
+ * time it starts at. After a reps step, times are estimates, so they get a "~".
+ */
+function openPreview(w) {
+  previewing = w;
+  const segs = buildSegments(w).filter((s) => s.type !== 'prep');
+  // Which intervals block a step belongs to, to say "Round 2 of 3 · Circuit"
+  const blockOf = new Map();
+  for (const it of w.items) if (it.type === 'intervals') for (const s of it.steps) blockOf.set(s.id, it);
+
+  $('preview-name').textContent = w.name || 'Untitled';
+  const works = segs.filter((s) => s.type === 'work').length;
+  const rests = segs.length - works;
+  const approx = segs.some(isReps) ? '~' : '';
+  $('preview-summary').textContent =
+    `${works} work · ${rests} rest${rests === 1 ? '' : 's'} · ${approx}${fmt(totalOf(segs))}`;
+
+  const list = $('preview-list');
+  list.replaceChildren();
+  let at = 0;
+  let estimated = false;
+  for (const s of segs) {
+    const row = el('li', `preview-row is-${s.type}`);
+    const text = el('span', 'list-text');
+    text.appendChild(el('span', 'preview-label', s.label));
+    const block = blockOf.get(s.stepId);
+    if (block && s.round) {
+      const name = isGenericName(block.name) ? '' : ` · ${block.name.trim()}`;
+      text.appendChild(el('span', 'list-sub', `Round ${s.round} of ${block.rounds}${name}`));
+    }
+    row.append(
+      el('span', 'preview-at', `${estimated ? '~' : ''}${fmt(at)}`),
+      text,
+      el('span', 'preview-amount', isReps(s) ? repsText(s.reps) : fmt(s.dur)),
+    );
+    list.appendChild(row);
+    at += s.dur;
+    if (isReps(s)) estimated = true;
+  }
+  if (!segs.length) list.appendChild(el('li', 'empty-state', 'Nothing to do yet: this workout has no steps.'));
+  $('preview-start').disabled = !hasWork(segs);
+  show('preview');
+}
+
+$('preview-back').addEventListener('click', openWorkouts);
+$('preview-start').addEventListener('click', () => previewing && startWorkout(previewing));
 
 // ----- Small popover menu (e.g. the ⋯ on a workout row) -----
 

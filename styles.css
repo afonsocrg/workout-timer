@@ -343,6 +343,27 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .list-sub { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-value { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
 
+/* ---------- Preview ---------- */
+#preview { padding-bottom: calc(env(safe-area-inset-bottom) + 32px); }
+.preview-name { flex: 1; min-width: 0; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-summary { color: var(--muted); font-size: 14px; margin: -8px 0 16px; font-variant-numeric: tabular-nums; }
+.preview-list { list-style: none; margin: 0 -20px 24px; padding: 0; border-top: 1px solid var(--line); }
+.preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 20px 6px 16px;
+  border-bottom: 1px solid var(--line);
+  border-left: 4px solid var(--work);
+}
+.preview-row.is-rest { border-left-color: var(--rest); background: rgba(59, 130, 246, 0.06); }
+.preview-at { flex: none; min-width: 48px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.preview-label { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-row.is-rest .preview-label { color: var(--rest); font-weight: 500; }
+.preview-amount { flex: none; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.preview-row.is-rest .preview-amount { color: var(--muted); font-weight: 500; }
+
 /* ---------- Log tab ---------- */
 .log-stats { color: var(--muted); font-size: 14px; margin-top: 4px; }
 .log-day { margin-bottom: 24px; scroll-margin-top: calc(env(safe-area-inset-top) + 16px); border-radius: 10px; transition: background-color 0.4s; }

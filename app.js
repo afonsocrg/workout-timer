@@ -508,7 +508,7 @@ let stopArmed = null;
 function resetStopButton() {
   clearTimeout(stopArmed);
   stopArmed = null;
-  $('stop').textContent = 'Stop';
+  $('stop').textContent = 'Cancel';
   $('stop').classList.remove('armed');
 }
 

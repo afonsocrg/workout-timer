@@ -17,6 +17,13 @@
   --danger: #f43f5e;
   --wheel-item: 38px;
   --radius: 14px;
+  /* Row columns shared by the editor and the Workouts list, so they line up:
+     handle · icon · name · time · delete */
+  --col-handle: 32px;
+  --col-icon: 32px;
+  --col-time: 64px;
+  --col-del: 32px;
+  --col-gap: 8px;
 }
 
 * { box-sizing: border-box; }
@@ -276,14 +283,22 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 }
 
 /* ---------- Lists (Workouts tab) ---------- */
-.list { border-top: 1px solid var(--line); }
+/* Rows: handle · name + summary · time · ⋯ · delete (same columns as the editor) */
+.list { margin: 0 -20px; border-top: 1px solid var(--line); }
 .list-item {
   position: relative;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--col-gap);
+  padding: 0 10px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
+.list-item.flash { animation: item-flash 0.9s ease-out; }
+.list-item > .drag-handle { width: var(--col-handle); align-self: stretch; margin: 0; }
+.icon-btn.more { width: 32px; height: 32px; display: grid; place-items: center; color: var(--muted); }
+.icon-btn.more svg { width: 20px; height: 20px; fill: currentColor; }
+.icon-btn.more.active { background: var(--surface-hi); color: var(--text); }
 .list-item.shifting { transition: transform 0.18s ease; }
 .list-item.dragging {
   z-index: 2;
@@ -348,7 +363,7 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .log-del.armed { background: var(--danger); color: #fff; font-weight: 700; padding: 0 10px; }
 
 /* ---------- Editor ---------- */
-#edit { padding-bottom: calc(env(safe-area-inset-bottom) + 100px); }
+#edit { padding-bottom: calc(env(safe-area-inset-bottom) + 32px); }
 
 .edit-header { display: flex; gap: 4px; align-items: center; margin: 0 0 16px -8px; }
 .icon-btn.back { width: 36px; height: 36px; font-size: 30px; line-height: 1; color: var(--text); }
@@ -356,14 +371,6 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 
 /* Flat list: every workout item, separated by full-width lines
    (the list bleeds into the page's 20px side padding). */
-#edit {
-  /* Columns shared by every row, so they line up: handle · icon · name · time · delete */
-  --col-handle: 32px;
-  --col-icon: 32px;
-  --col-time: 64px;
-  --col-del: 32px;
-  --col-gap: 8px;
-}
 .items {
   margin: 0 -20px;
   border-top: 1px solid var(--line);
@@ -454,6 +461,8 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   font-variant-numeric: tabular-nums;
 }
 .step .pill.dur, .head-meta { color: var(--muted); font-weight: 400; }
+.step .pill.dur.reps { padding-left: 0; white-space: nowrap; }
+.pill-unit { font-size: 13px; margin-left: 3px; }
 
 /* Column 5: delete (two taps: the icon turns into a red "Delete") */
 .icon-btn.trash { width: var(--col-del); display: grid; place-items: center; color: var(--faint); }
@@ -534,46 +543,30 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .add-card.is-rest b { color: var(--rest); }
 .add-card small { font-size: 12px; color: var(--muted); }
 
-.edit-extra { display: flex; gap: 28px; justify-content: center; margin: 8px 0; }
-
-.start-bar {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  padding: 16px 20px calc(var(--safe-bottom) + 4px);
-  background: linear-gradient(transparent, var(--bg) 35%);
-}
-.start-bar-inner { max-width: 600px; margin: 0 auto; display: flex; gap: 10px; }
-.start-bar .btn { font-size: 18px; }
-.start-bar .btn.primary { flex: 1; }
-.btn.secondary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* ---------- Popover menu ---------- */
+.menu {
+  position: absolute;
+  z-index: 15;
+  min-width: 160px;
+  padding: 6px;
   background: var(--surface-hi);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  animation: menu-in 0.12s ease-out;
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.96); } }
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
   color: var(--text);
-  padding: 15px 18px;
+  font-size: 16px;
+  text-align: left;
 }
-.btn.secondary svg { width: 13px; height: 13px; fill: var(--accent); }
-.btn.danger { background: var(--danger); color: #fff; }
-
-/* ---------- Confirm dialog ---------- */
-.confirm { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; }
-.confirm-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); animation: fade 0.15s; }
-.confirm-panel {
-  position: relative;
-  width: min(100%, 340px);
-  background: var(--surface);
-  border-radius: 18px;
-  padding: 20px;
-  text-align: center;
-  animation: pop 0.15s ease-out;
-}
-@keyframes pop { from { transform: scale(0.94); opacity: 0; } }
-.confirm-title { font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
-.confirm-msg { font-size: 14px; color: var(--muted); margin-top: 6px; }
-.confirm-actions { display: flex; gap: 10px; margin-top: 20px; }
-.confirm-actions .btn { flex: 1; padding: 12px; font-size: 16px; }
-#confirm-cancel { background: var(--surface-hi); color: var(--text); }
+.menu-item:active, .menu-item:focus-visible { background: rgba(255, 255, 255, 0.08); outline: none; }
 
 /* ---------- Wheel picker sheet ---------- */
 .sheet { position: fixed; inset: 0; z-index: 10; }
@@ -646,6 +639,37 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
   backface-visibility: hidden;
 }
 .wheel-unit { position: absolute; left: 100%; color: var(--muted); font-size: 15px; margin-left: -6px; pointer-events: none; }
+/* Three wheels (reps · min · sec) need tighter spacing, with a wider gap between groups */
+.wheels-row.dense { gap: 28px; }
+.wheels-row.dense .group-start { margin-left: 22px; }
+
+/* Time / Reps switch */
+.seg { display: flex; gap: 2px; padding: 3px; margin: 4px 0 10px; background: var(--bg); border-radius: 10px; }
+.seg button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+.seg button.on { background: var(--surface-hi); color: var(--text); }
+
+/* Labels over groups of wheels ("Reps", "Takes about") */
+.wheel-labels { position: relative; height: 18px; margin-bottom: 2px; }
+.wheel-label {
+  position: absolute;
+  top: 0;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
 
 /* ---------- Running ---------- */
 #run {
@@ -721,6 +745,8 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .btn.ctrl { background: rgba(0,0,0,0.22); color: #fff; min-width: 96px; }
 .btn.ctrl.big { min-width: 140px; background: rgba(0,0,0,0.35); }
 .btn.ctrl.armed { background: var(--danger); color: #fff; }
+.btn.ctrl.done { background: #fff; color: #15803d; }
+.run-unit { font-size: 0.25em; font-weight: 700; letter-spacing: 0.02em; margin-left: 0.15em; opacity: 0.8; }
 
 /* ---------- Done ---------- */
 #done { display: flex; align-items: center; justify-content: center; background: var(--accent); color: #111; }

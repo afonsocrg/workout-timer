@@ -5,13 +5,13 @@ A small, installable interval timer for workouts. Plain HTML, CSS and JavaScript
 ## Features
 
 - **Home**: an activity calendar (days with a completed workout are green) and a row of your workouts — tap one to start
-- **Workouts** tab: create and edit saved workouts
+- **Workouts** tab: create, edit, reorder, duplicate (⋯ menu) and delete workouts
 - **Log** tab: every completed workout, grouped by day
 - **Workouts are a list of items**, each one of:
-  - **Work** / **Rest**: a single timed step
+  - **Work** / **Rest**: a single timed step. A Work step can count **reps** instead (switch Time → Reps in its picker): the run shows the rep count and waits for you to tap **Done**. Its expected time only feeds the workout's estimated length
   - **Intervals**: a list of named work/rest steps repeated for N rounds, with optional rest between rounds — covers 5 × 30s, Tabata, EMOM and circuits (Squats → Rest → Push-ups …)
 
-  Drag the handle to reorder items, or steps inside intervals. Edits are kept as a draft until you tap **Save**.
+  Drag the handle to reorder items, or steps inside intervals. Edits save as you make them.
 - **iOS-style scroll wheels** for picking times and round counts
 - **Sounds**: a soft chime on each of the last 3 seconds of every interval, a brighter chime on each change, and a finish chime at the end
 - Time remaining and expected finish time while running

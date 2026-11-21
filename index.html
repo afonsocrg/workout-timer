@@ -96,20 +96,6 @@
       <button type="button" class="add-card" data-add="intervals"><b>Intervals</b><small>Repeat steps</small></button>
     </div>
 
-    <div class="edit-extra">
-      <button id="duplicate" class="text-btn muted" type="button">Duplicate</button>
-      <button id="delete" class="text-btn danger" type="button">Delete</button>
-    </div>
-
-    <div class="start-bar">
-      <div class="start-bar-inner">
-        <button id="start" class="btn secondary" type="button" aria-label="Start workout">
-          <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M4 2 L13 7 L4 12 Z"/></svg>
-          Start
-        </button>
-        <button id="save" class="btn primary" type="button">Save</button>
-      </div>
-    </div>
   </main>
 
   <!-- Running -->
@@ -160,6 +146,8 @@
         <span id="sheet-title"></span>
         <button id="sheet-done" type="button">Done</button>
       </div>
+      <div id="sheet-modes" class="seg hidden" role="group" aria-label="Measure by"></div>
+      <div id="wheel-labels" class="wheel-labels hidden" aria-hidden="true"></div>
       <div class="wheels">
         <div class="wheel-band"></div>
         <div id="wheels-row" class="wheels-row"></div>
@@ -167,18 +155,8 @@
     </div>
   </div>
 
-  <!-- Confirm dialog -->
-  <div id="confirm" class="confirm hidden" aria-hidden="true">
-    <div class="confirm-backdrop"></div>
-    <div class="confirm-panel" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
-      <div id="confirm-title" class="confirm-title"></div>
-      <div id="confirm-msg" class="confirm-msg"></div>
-      <div class="confirm-actions">
-        <button id="confirm-cancel" class="btn" type="button">Cancel</button>
-        <button id="confirm-ok" class="btn danger" type="button">Delete</button>
-      </div>
-    </div>
-  </div>
+  <!-- Popover menu (filled by openMenu) -->
+  <div id="menu" class="menu hidden" role="menu"></div>
 
   <template id="card-tpl">
     <div class="wo-card" role="button" tabindex="0">

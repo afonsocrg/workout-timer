@@ -380,10 +380,9 @@ const timer = {
   pausedLeft: 0,    // ms left in segment when paused
   lastBeepSec: null,
   interval: null,
-  returnTo: 'home',
 };
 
-function startWorkout(w, returnTo) {
+function startWorkout(w) {
   const segs = buildSegments(w);
   if (!hasWork(segs)) return;
   numberWorkRounds(segs);
@@ -399,7 +398,6 @@ function startWorkout(w, returnTo) {
     segStart: performance.now(),
     segEnd: performance.now() + segs[0].dur * 1000,
     lastBeepSec: null,
-    returnTo,
   });
 
   // Confirm the start with a long beep, unless the first segment is so short
@@ -542,8 +540,7 @@ function finishWorkout() {
 }
 
 function goBack() {
-  if (timer.returnTo === 'edit' && editing) { renderEditor(); show('edit'); } // back to the (maybe unsaved) draft
-  else openHome();
+  openHome();
 }
 
 function renderRun(leftMs) {
@@ -562,8 +559,9 @@ function renderRun(leftMs) {
   $('run-round').style.visibility = timer.segs.workTotal < 2 ? 'hidden' : ''; // keep its space so "left" stays put
   $('run-round-num').textContent = seg.workNo;
   $('run-round-total').textContent = timer.segs.workTotal;
-  // Reps: the bar fills over the expected time, then stays full
-  $('run-progress').style.width = `${(seg.dur > 0 ? 1 - leftMs / (seg.dur * 1000) : 1) * 100}%`;
+  // Reps have no clock, so no bar; it's only hidden (not removed) so nothing below moves
+  $('run-progress').parentElement.style.visibility = seg.reps ? 'hidden' : '';
+  if (!seg.reps) $('run-progress').style.width = `${(1 - leftMs / (seg.dur * 1000)) * 100}%`;
 
   const next = timer.segs[timer.idx + 1];
   $('run-next').textContent = next ? `Next: ${next.label} ${next.reps ? repsText(next.reps) : fmt(next.dur)}` : 'Last interval!';
@@ -647,27 +645,74 @@ function createWheel(col, onSettle) {
 
 /**
  * Open the picker sheet.
- * columns: wheel column specs (see createWheel); onChange(values[]) fires live.
+ * columns: wheel column specs (see createWheel, plus an optional `group` label
+ * shown above a run of columns); onChange(values[]) fires live.
+ * modes (optional): a segmented switch above the wheels,
+ *   { options: { key: label }, current: key, onSelect(key) => { columns, onChange } }
  */
-function openPicker({ title, anchor, columns, onChange }) {
+function openPicker({ title, anchor, columns, onChange, modes }) {
   closePicker();
   $('sheet-title').textContent = title;
+  anchor?.classList.add('active');
+  $('sheet').classList.remove('hidden');
+  $('sheet').setAttribute('aria-hidden', 'false');
+  sheet = { anchor, wheels: [], modes };
+
+  const seg = $('sheet-modes');
+  seg.classList.toggle('hidden', !modes);
+  seg.replaceChildren();
+  if (modes) {
+    for (const [key, label] of Object.entries(modes.options)) {
+      const b = el('button', key === modes.current ? 'on' : '', label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(key === modes.current));
+      b.addEventListener('click', () => {
+        if (key === modes.current) return;
+        modes.current = key;
+        seg.querySelectorAll('button').forEach((x) => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', String(x === b));
+        });
+        const next = modes.onSelect(key);
+        setWheels(next.columns, next.onChange);
+      });
+      seg.appendChild(b);
+    }
+  }
+  setWheels(columns, onChange);
+}
+
+/** Fill the (visible) sheet with wheels, replacing any that are there. */
+function setWheels(columns, onChange) {
   const row = $('wheels-row');
   row.replaceChildren();
+  row.classList.toggle('dense', columns.length > 2);
   const current = columns.map((c) => c.index);
-  const wheels = columns.map((col, ci) => {
+  sheet.wheels = columns.map((col, ci) => {
     const wheel = createWheel(col, (i) => {
       current[ci] = i;
       onChange(current.map((idx, k) => columns[k].values[idx]));
     });
+    if (ci > 0 && col.group !== columns[ci - 1].group) wheel.el.classList.add('group-start');
     row.appendChild(wheel.el);
     return wheel;
   });
-  anchor?.classList.add('active');
-  $('sheet').classList.remove('hidden');
-  $('sheet').setAttribute('aria-hidden', 'false');
-  sheet = { anchor, wheels };
-  wheels.forEach((w) => w.init());
+  sheet.wheels.forEach((w) => w.init());
+
+  // Group labels, each centred over its run of wheels. The row stays (empty)
+  // when switching modes, so the sheet doesn't jump in height.
+  const labels = $('wheel-labels');
+  labels.replaceChildren();
+  const groups = [...new Set(columns.map((c) => c.group).filter(Boolean))];
+  labels.classList.toggle('hidden', !groups.length && !sheet.modes);
+  const base = labels.getBoundingClientRect().left;
+  for (const g of groups) {
+    const els = sheet.wheels.filter((_, i) => columns[i].group === g).map((w) => w.el.getBoundingClientRect());
+    const label = el('span', 'wheel-label', g);
+    label.style.left = `${els[0].left - base}px`;
+    label.style.width = `${els[els.length - 1].right - els[0].left}px`;
+    labels.appendChild(label);
+  }
 }
 
 function closePicker() {
@@ -711,6 +756,58 @@ function bindDuration(btn, title, get, set, maxSec = 3600, { render = (v) => { b
   });
 }
 
+/**
+ * The amount of a Work/Rest step: a duration, or (work only) a number of reps
+ * plus the time they're expected to take. Returns a function that repaints
+ * the button, e.g. after the step switched between work and rest.
+ */
+function bindStepAmount(btn, s) {
+  const render = () => {
+    btn.classList.toggle('reps', isReps(s));
+    if (isReps(s)) btn.replaceChildren(String(s.reps), el('span', 'pill-unit', s.reps === 1 ? 'rep' : 'reps'));
+    else btn.textContent = fmt(s.dur);
+  };
+  render();
+
+  const durColumns = (group) => [
+    { values: range(0, 60), index: Math.floor(s.dur / 60), unit: 'min', group },
+    { values: range(0, 59), index: s.dur % 60, format: pad2, unit: 'sec', group },
+  ];
+  const setDur = (m, sec) => { s.dur = clamp(m * 60 + sec, 0, 3600); };
+  const commit = () => { render(); edited(); };
+  const modes = {
+    time: () => ({ columns: durColumns(), onChange: ([m, sec]) => { setDur(m, sec); commit(); } }),
+    reps: () => ({
+      columns: [
+        { values: range(1, MAX_REPS), index: clamp(s.reps, 1, MAX_REPS) - 1, unit: 'reps', group: 'Reps' },
+        ...durColumns('Takes about'),
+      ],
+      onChange: ([n, m, sec]) => { s.reps = n; setDur(m, sec); commit(); },
+    }),
+  };
+
+  btn.addEventListener('click', () => {
+    if (s.type === 'rest') return openPicker({ title: 'Rest', anchor: btn, ...modes.time() });
+    const current = isReps(s) ? 'reps' : 'time';
+    openPicker({
+      title: labelOf('work', s.name),
+      anchor: btn,
+      ...modes[current](),
+      modes: {
+        options: { time: 'Time', reps: 'Reps' },
+        current,
+        onSelect: (key) => {
+          if (key === 'reps') s.reps = DEFAULT_REPS;
+          else delete s.reps;
+          commit();
+          return modes[key]();
+        },
+      },
+    });
+  });
+  return render;
+}
+
 /** Bind a button to an integer count with a single wheel (opts as in bindDuration). */
 function bindCount(btn, title, get, set, min = 1, max = 99, { render = (n) => { btn.textContent = n; } } = {}) {
   render(get());
@@ -736,6 +833,7 @@ const VIEWS = ['home', 'workouts', 'log', 'edit', 'run', 'done'];
 const TAB_VIEWS = ['home', 'workouts', 'log'];
 
 function show(view) {
+  closeMenu();
   for (const id of VIEWS) $(id).classList.toggle('hidden', id !== view);
   const tabbed = TAB_VIEWS.includes(view);
   $('tabbar').classList.toggle('hidden', !tabbed);
@@ -873,7 +971,7 @@ function openHome() {
     const card = fillCard(clone('card-tpl'), w);
     card.classList.add('quick');
     card.setAttribute('aria-label', `Start ${w.name || 'workout'}`);
-    onActivate(card, () => startWorkout(w, 'home'));
+    onActivate(card, () => startWorkout(w));
     row.appendChild(card);
   }
   if (!row.children.length) {
@@ -889,7 +987,10 @@ function openHome() {
 // ----- Workouts tab: grid of workouts (tap to edit) -----
 
 function createWorkout() {
-  openDraft(newWorkout(), { isNew: true, collapse: false }); // a brand-new workout opens ready to edit
+  const w = newWorkout();
+  store.workouts.push(w);
+  save();
+  openEditor(w.id, { collapse: false }); // a brand-new workout opens ready to edit
   $('wo-name').focus();
   $('wo-name').select();
 }
@@ -916,7 +1017,26 @@ function openWorkouts() {
     handle.innerHTML = HANDLE_SVG;
     bindDragHandle(handle, item, (from, to) => { moveItem(store.workouts, from, to); save(); });
 
-    item.append(row, handle);
+    const more = el('button', 'icon-btn more');
+    more.type = 'button';
+    more.setAttribute('aria-label', `More actions for ${w.name || 'workout'}`);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.innerHTML = MORE_SVG;
+    more.addEventListener('click', () => (menuOpenFor === more ? closeMenu() : openMenu(more, [
+      { label: 'Duplicate', action: () => duplicateWorkout(w) },
+    ])));
+
+    const del = el('button', 'icon-btn trash');
+    del.type = 'button';
+    del.setAttribute('aria-label', `Delete ${w.name || 'workout'}`);
+    del.innerHTML = TRASH_SVG;
+    armToConfirm(del, () => {
+      store.workouts = store.workouts.filter((x) => x !== w);
+      save();
+      openWorkouts();
+    });
+
+    item.append(handle, row, more, del);
     list.appendChild(item);
   }
 
@@ -931,6 +1051,61 @@ function openWorkouts() {
 }
 
 $('add-workout').addEventListener('click', createWorkout);
+
+const MORE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>';
+const TRASH_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+
+/** Copy a workout (new ids, so the copy's history stays its own) right after the original. */
+function duplicateWorkout(w) {
+  const copy = reId({ ...structuredClone(w), name: `${w.name} (copy)` });
+  store.workouts.splice(store.workouts.indexOf(w) + 1, 0, copy);
+  save();
+  openWorkouts();
+  const row = $('workout-list').querySelector(`[data-id="${copy.id}"]`);
+  row?.classList.add('flash');
+  setTimeout(() => row?.classList.remove('flash'), 900);
+}
+
+// ----- Small popover menu (e.g. the ⋯ on a workout row) -----
+
+let menuOpenFor = null;
+
+function openMenu(anchor, entries) {
+  closeMenu();
+  const menu = $('menu');
+  menu.replaceChildren(...entries.map(({ label, action }) => {
+    const b = el('button', 'menu-item', label);
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.addEventListener('click', () => { closeMenu(); action(); });
+    return b;
+  }));
+  menu.classList.remove('hidden');
+  // Below the button, right-aligned with it (above it if there's no room below)
+  const r = anchor.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  const below = r.bottom + 4 + m.height < window.innerHeight;
+  menu.style.top = `${(below ? r.bottom + 4 : r.top - 4 - m.height) + window.scrollY}px`;
+  menu.style.left = `${Math.max(8, r.right - m.width) + window.scrollX}px`;
+  anchor.classList.add('active');
+  anchor.setAttribute('aria-expanded', 'true');
+  menuOpenFor = anchor;
+  menu.firstElementChild?.focus({ preventScroll: true });
+}
+
+function closeMenu() {
+  if (!menuOpenFor) return;
+  $('menu').classList.add('hidden');
+  menuOpenFor.classList.remove('active');
+  menuOpenFor.setAttribute('aria-expanded', 'false');
+  menuOpenFor = null;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (menuOpenFor && !$('menu').contains(e.target) && !menuOpenFor.contains(e.target)) closeMenu();
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('scroll', closeMenu, { passive: true });
 
 /** Move one array element from index `from` to index `to`. */
 const moveItem = (arr, from, to) => arr.splice(to, 0, arr.splice(from, 1)[0]);
@@ -1108,93 +1283,30 @@ function openLog(focusDay) {
 
 // ----- Editor -----
 
-// The editor works on a copy of the workout ("draft"); nothing is stored until Save.
+// The editor changes the stored workout directly; every edit is saved right away.
 let editing = null;
-let draft = { isNew: false, after: null, dirty: false };
 
-function openEditor(id) {
-  const w = findWorkout(id);
-  if (!w) return openWorkouts();
-  openDraft(structuredClone(w), { isNew: false });
-}
-
-/** isNew: not in the store yet; after: id of the workout to insert it after on save. */
-function openDraft(w, { isNew, after = null, dirty = false, collapse = true }) {
-  editing = w;
-  draft = { isNew, after, dirty };
+/** collapse: start with every intervals block folded (for an overview). */
+function openEditor(id, { collapse = true } = {}) {
+  editing = findWorkout(id);
+  if (!editing) return openWorkouts();
   collapsed.clear();
-  if (collapse) for (const it of w.items) if (it.type === 'intervals') collapsed.add(it.id);
+  if (collapse) for (const it of editing.items) if (it.type === 'intervals') collapsed.add(it.id);
   renderEditor();
   show('edit');
 }
 
-function markDirty() { draft.dirty = true; }
-
+/** A value changed: save and refresh the totals. */
 function edited() {
-  markDirty();
+  save();
   if (editing) updateSummaries();
 }
 
+/** Items were added, removed or moved: save and redraw. */
 function structureChanged() {
-  markDirty();
+  save();
   renderEditor();
 }
-
-function saveDraft() {
-  const i = store.workouts.findIndex((w) => w.id === editing.id);
-  if (i !== -1) store.workouts[i] = editing;
-  else {
-    const after = store.workouts.findIndex((w) => w.id === draft.after);
-    store.workouts.splice(after === -1 ? store.workouts.length : after + 1, 0, editing);
-  }
-  save();
-  editing = structuredClone(editing); // keep the stored copy safe from further edits
-  draft = { isNew: false, after: null, dirty: false };
-}
-
-/** Leave the editor, asking first if there are unsaved changes. */
-function leaveEditor() {
-  if (!draft.dirty && !draft.isNew) return openWorkouts();
-  askConfirm({
-    title: draft.isNew ? 'Discard this new workout?' : 'Discard unsaved changes?',
-    message: 'Your changes will be lost.',
-    ok: 'Discard',
-  }, openWorkouts);
-}
-
-/** Replace a pill element with a fresh clone so old listeners are dropped. */
-function freshPill(node) {
-  const fresh = node.cloneNode(true);
-  node.replaceWith(fresh);
-  return fresh;
-}
-
-// ----- Confirm dialog (no browser dialogs: they block the page on iOS) -----
-
-let confirmAction = null;
-
-function askConfirm({ title, message = '', ok = 'Delete' }, onOk) {
-  $('confirm-title').textContent = title;
-  $('confirm-msg').textContent = message;
-  $('confirm-msg').classList.toggle('hidden', !message);
-  $('confirm-ok').textContent = ok;
-  confirmAction = onOk;
-  $('confirm').classList.remove('hidden');
-  $('confirm').setAttribute('aria-hidden', 'false');
-  $('confirm-cancel').focus();
-}
-
-function closeConfirm() {
-  confirmAction = null;
-  $('confirm').classList.add('hidden');
-  $('confirm').setAttribute('aria-hidden', 'true');
-}
-
-$('confirm-ok').addEventListener('click', () => { const fn = confirmAction; closeConfirm(); fn?.(); });
-$('confirm-cancel').addEventListener('click', closeConfirm);
-document.querySelector('.confirm-backdrop').addEventListener('click', closeConfirm);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && confirmAction) closeConfirm(); });
-
 
 /**
  * Two-tap confirm: the first tap turns the button into a red "Delete", the
@@ -1237,7 +1349,9 @@ function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
   const row = clone('step-tpl');
   const stepName = row.querySelector('.step-name');
   const kind = row.querySelector('.kind');
+  let paintAmount = () => {};
   const paintKind = () => {
+    paintAmount(); // a rest never counts reps
     kind.classList.toggle('is-rest', s.type === 'rest');
     kind.setAttribute('aria-label', s.type === 'rest' ? 'Rest (tap to make it work)' : 'Work (tap to make it rest)');
     row.classList.toggle('is-rest', s.type === 'rest');
@@ -1252,9 +1366,9 @@ function renderStep(s, list, { minCount = 0, parentName = '' } = {}) {
   });
 
   stepName.value = s.name;
-  stepName.addEventListener('input', () => { s.name = stepName.value; markDirty(); });
+  stepName.addEventListener('input', () => { s.name = stepName.value; save(); });
 
-  bindDuration(row.querySelector('.dur'), s.type === 'rest' ? 'Rest' : labelOf('work', s.name), () => s.dur, (v) => { s.dur = v; });
+  paintAmount = bindStepAmount(row.querySelector('.dur'), s);
 
   const del = row.querySelector('[data-act="delete"]');
   del.disabled = list.length <= minCount;
@@ -1292,7 +1406,7 @@ function renderIntervals(it, list) {
   node.querySelector('.block-head').addEventListener('click', (e) => {
     if (collapsed.has(it.id) && !e.target.closest('.collapse-btn, .trash')) toggle();
   });
-  name.addEventListener('input', () => { it.name = name.value; markDirty(); });
+  name.addEventListener('input', () => { it.name = name.value; save(); });
 
   // "5 rounds · 0:30 rest between": two tappable values with small labels
   const roundsBtn = node.querySelector('.stat-rounds');
@@ -1350,17 +1464,15 @@ function updateSummaries() {
     const node = $('items').querySelector(`[data-id="${it.id}"]`);
     node.querySelector('.head-meta').textContent = fmt(itemDuration(it));
   }
-  const segs = buildSegments(w);
   $('total-time').textContent = fmt(planDuration(w));
-  $('start').disabled = !hasWork(segs);
 }
 
-$('wo-name').addEventListener('input', (e) => { editing.name = e.target.value; markDirty(); });
+$('wo-name').addEventListener('input', (e) => { editing.name = e.target.value; save(); });
 $('wo-name').addEventListener('change', (e) => {
-  if (!editing.name.trim()) { editing.name = 'Untitled'; e.target.value = editing.name; }
+  if (!editing.name.trim()) { editing.name = 'Untitled'; e.target.value = editing.name; save(); }
 });
 
-$('edit-back').addEventListener('click', leaveEditor);
+$('edit-back').addEventListener('click', openWorkouts);
 
 // ----- Collapsing intervals (view state only, not part of the workout) -----
 // Opening a workout starts with every block collapsed, for an overview;
@@ -1407,21 +1519,6 @@ function reId(w) {
   }
   return w;
 }
-
-// Duplicate: the copy (including any unsaved edits) opens as a new draft; the original stays as saved.
-$('duplicate').addEventListener('click', () => {
-  const copy = reId({ ...structuredClone(editing), name: `${editing.name} (copy)` });
-  openDraft(copy, { isNew: true, after: editing.id, dirty: true });
-});
-
-armToConfirm($('delete'), () => {
-  store.workouts = store.workouts.filter((w) => w.id !== editing.id);
-  save();
-  openWorkouts();
-}, 'Tap again to delete');
-
-$('save').addEventListener('click', () => { saveDraft(); openWorkouts(); });
-$('start').addEventListener('click', () => startWorkout(editing, 'edit'));
 
 // ----- Running / done -----
 

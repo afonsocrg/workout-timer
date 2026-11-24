@@ -770,6 +770,37 @@ input[type="text"]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); bor
 .btn.ctrl.done { background: #fff; color: #15803d; }
 .run-unit { font-size: 0.25em; font-weight: 700; letter-spacing: 0.02em; margin-left: 0.15em; opacity: 0.8; }
 
+/* Phone in landscape: height is the scarce dimension, so the sizes above
+   (which scale with width) would push the time off screen. Put the round and
+   time-left stats in the side columns, the step in the middle, the controls
+   underneath, and size type by height instead. */
+@media (orientation: landscape) and (max-height: 540px) {
+  #run {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-rows: 1fr auto;
+    align-items: center;
+    column-gap: 16px;
+    padding-top: calc(env(safe-area-inset-top) + 12px);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+  }
+  .run-top { display: contents; }
+  .run-top > .run-stat { grid-row: 1; align-self: start; margin-top: 4px; }
+  #run-round { grid-column: 1; }
+  .run-status { grid-column: 3; }
+  .run-center { grid-column: 2; grid-row: 1; }
+  .run-bottom { grid-column: 1 / -1; grid-row: 2; }
+
+  .run-stat-label { font-size: clamp(11px, 3dvh, 16px); }
+  .run-round-count { font-size: clamp(28px, 13dvh, 72px); }
+  .run-total { font-size: clamp(20px, 8dvh, 44px); }
+  .run-label { font-size: clamp(20px, 8dvh, 48px); }
+  .run-time { font-size: clamp(64px, 40dvh, 220px); margin: 0 0 10px; }
+  .progress { width: min(50vw, 480px); }
+  .run-next { margin-top: 8px; font-size: 15px; }
+  .btn.ctrl { padding-block: 10px; }
+}
+
 /* ---------- Done ---------- */
 #done { display: flex; align-items: center; justify-content: center; background: var(--accent); color: #111; }
 .done-center { text-align: center; }
